@@ -1,0 +1,450 @@
+"""
+FFmpeg 视频导出模块
+将图片 + 配音 + 字幕直接拼接为 MP4，与剪映草稿并行输出。
+"""
+
+import json
+import logging
+import random
+import re
+import shutil
+import subprocess
+import tempfile
+import wave
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+from typing import List, Optional
+
+logger = logging.getLogger(__name__)
+
+_LEADING_PUNCT = re.compile(r'^[。！？!?…，,；;、：:]+')
+_TRAILING_PUNCT = re.compile(r'[。！？!?…，,；;、]+$')
+
+DEFAULT_DURATION_US = 4_000_000  # 4s fallback
+
+
+class FFmpegExporter:
+    """FFmpeg 视频导出器"""
+
+    def __init__(self, config_path: str = "config/settings.json"):
+        self._cfg = self._load_config(config_path)
+        canvas = self._cfg.get("canvas", {})
+        self.width = canvas.get("width", 1920)
+        self.height = canvas.get("height", 1080)
+        self.fps = canvas.get("fps", 30)
+        self.is_landscape = (self.width / self.height) >= 1.6
+
+        ff_cfg = self._cfg.get("ffmpeg", {})
+        self.crf = ff_cfg.get("crf", 20)
+        self.preset = ff_cfg.get("preset", "fast")
+
+        self._ffmpeg = self._find_ffmpeg()
+        self._encoder, self._use_crf = self._detect_encoder()
+        self._font = self._find_font(ff_cfg.get("font_path"))
+
+    # ── 初始化辅助 ─────────────────────────────────────────────────
+
+    def _detect_encoder(self) -> tuple:
+        """检测可用的 H.264 编码器，返回 (encoder_name, supports_crf)"""
+        # 优先 libx264（支持 crf），fallback 到 Windows MediaFoundation
+        for enc, crf in [("libx264", True), ("h264_nvenc", False), ("h264_mf", False)]:
+            try:
+                r = subprocess.run(
+                    [self._ffmpeg, "-hide_banner", "-encoders"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                if enc in r.stdout:
+                    logger.info(f"使用编码器: {enc}")
+                    return enc, crf
+            except Exception:
+                pass
+        logger.warning("未检测到 H.264 编码器，fallback 到 libx264")
+        return "libx264", True
+
+    @staticmethod
+    def _load_config(path: str) -> dict:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _find_ffmpeg() -> str:
+        path = shutil.which("ffmpeg")
+        if path:
+            return path
+        # 通过 imageio-ffmpeg 获取完整版 ffmpeg
+        try:
+            import imageio_ffmpeg
+            path = imageio_ffmpeg.get_ffmpeg_exe()
+            if path and Path(path).is_file():
+                return path
+        except ImportError:
+            pass
+        raise RuntimeError(
+            "找不到 ffmpeg，请 pip install imageio-ffmpeg 或安装到系统 PATH"
+        )
+
+    @staticmethod
+    def _find_font(override: Optional[str] = None) -> str:
+        candidates = []
+        if override:
+            candidates.append(override)
+        candidates += [
+            # Linux (Docker / 云端)
+            "/usr/share/fonts/noto-cjk/NotoSansCJKsc-Regular.otf",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+            # Windows
+            "C:/Windows/Fonts/msyh.ttc",
+            "C:/Windows/Fonts/simhei.ttf",
+        ]
+        for p in candidates:
+            if Path(p).exists():
+                return p
+        return ""
+
+    # ── WAV 时长 ───────────────────────────────────────────────────
+
+    @staticmethod
+    def _get_wav_duration_us(wav_path: str) -> int:
+        with wave.open(wav_path, "rb") as wf:
+            frames = wf.getnframes()
+            rate = wf.getframerate()
+        return int(frames / rate * 1_000_000)
+
+    # ── Ken Burns 滤镜 ─────────────────────────────────────────────
+
+    @staticmethod
+    def _zoompan_expr(
+        anim_type: int,
+        scale_end: float,
+        total_frames: int,
+        width: int,
+        height: int,
+    ) -> str:
+        delta = scale_end - 1.0
+        d = total_frames
+        z = f"1.0+{delta:.6f}*on/{d}"
+        cx = "iw/2-(iw/zoom/2)"
+        cy = "ih/2-(ih/zoom/2)"
+
+        px = int(0.02 * width)
+        py = int(0.015 * height)
+
+        if anim_type == 1:  # zoom + 左移
+            x = f"{cx}+{px}*(1-2*on/{d})"
+            y = cy
+        elif anim_type == 2:  # zoom + 右移
+            x = f"{cx}-{px}*(1-2*on/{d})"
+            y = cy
+        elif anim_type == 3:  # zoom + 斜移
+            x = f"{cx}-{px}*(1-2*on/{d})"
+            y = f"{cy}-{py}*(1-2*on/{d})"
+        else:  # type 0 纯放大
+            x = cx
+            y = cy
+
+        return (
+            f"zoompan=z='{z}':x='{x}':y='{y}'"
+            f":d={d}:s={width}x{height}:fps={width}"  # fps 占位，下面覆盖
+        )
+
+    # ── drawtext 字幕 ──────────────────────────────────────────────
+
+    def _drawtext_expr(self, text: str) -> str:
+        clean = _LEADING_PUNCT.sub("", text)
+        clean = _TRAILING_PUNCT.sub("", clean)
+        if not clean:
+            clean = text
+
+        escaped = (
+            clean.replace("\\", "\\\\")
+            .replace(":", "\\:")
+            .replace("'", "\u2019")  # 智能单引号替换，避免 shell 问题
+            .replace("%", "%%")
+        )
+
+        font_esc = self._font.replace("\\", "/").replace(":", "\\:") if self._font else ""
+
+        if self.is_landscape:
+            fontsize = int(self.height * 0.055)  # 约 59px @1080
+            y_pos = f"h*0.88"
+        else:
+            fontsize = int(self.height * 0.038)  # 约 73px @1920
+            y_pos = f"h*0.88"
+
+        parts = [
+            f"drawtext=text='{escaped}'",
+            f"fontsize={fontsize}",
+            "fontcolor=white",
+            "borderw=3",
+            "bordercolor=black",
+            "x=(w-text_w)/2",
+            f"y={y_pos}",
+        ]
+        if font_esc:
+            parts.insert(1, f"fontfile='{font_esc}'")
+
+        return ":".join(parts)
+
+    # ── 单段编码 ───────────────────────────────────────────────────
+
+    def _build_segment_clip(
+        self,
+        index: int,
+        image_path: str,
+        audio_path: Optional[str],
+        text: str,
+        anim_type: int,
+        scale_end: float,
+        tmp_dir: str,
+    ) -> str:
+        if audio_path and Path(audio_path).exists():
+            duration_us = self._get_wav_duration_us(audio_path)
+        else:
+            duration_us = DEFAULT_DURATION_US
+            audio_path = None
+
+        duration_s = duration_us / 1_000_000
+        total_frames = int(duration_s * self.fps)
+        if total_frames < 1:
+            total_frames = 1
+
+        # 构建滤镜链
+        # zoompan 内部用 2x 分辨率以获得亚像素精度，再 scale 回目标尺寸
+        zw = self.width * 2
+        zh = self.height * 2
+        # 输入图片先放大到 zoompan 工作区（需要比 2x 稍大以容纳缩放+平移）
+        margin = max(scale_end, 1.0) + 0.05
+        upw = int(zw * margin)
+        uph = int(zh * margin)
+        # 保持偶数
+        upw += upw % 2
+        uph += uph % 2
+
+        delta = scale_end - 1.0
+        d = total_frames
+        z_expr = f"1.0+{delta:.6f}*on/{d}"
+        cx = "iw/2-(iw/zoom/2)"
+        cy = "ih/2-(ih/zoom/2)"
+        # 单方向匀速平移（从 A→B，不来回）
+        # 平移总量控制在画面的 1.5%，配合放大不会露出黑边
+        px = 0.015 * zw
+        py = 0.01 * zh
+
+        if anim_type == 1:    # 放大 + 缓慢左移
+            x_expr = f"{cx}+{px:.1f}*(1-on/{d})"
+            y_expr = cy
+        elif anim_type == 2:  # 放大 + 缓慢右移
+            x_expr = f"{cx}-{px:.1f}*(1-on/{d})"
+            y_expr = cy
+        elif anim_type == 3:  # 放大 + 缓慢上移
+            x_expr = cx
+            y_expr = f"{cy}+{py:.1f}*(1-on/{d})"
+        elif anim_type == 4:  # 放大 + 缓慢下移
+            x_expr = cx
+            y_expr = f"{cy}-{py:.1f}*(1-on/{d})"
+        elif anim_type == 5:  # 放大 + 左上→右下
+            x_expr = f"{cx}+{px:.1f}*(1-on/{d})"
+            y_expr = f"{cy}+{py:.1f}*(1-on/{d})"
+        elif anim_type == 6:  # 放大 + 右下→左上
+            x_expr = f"{cx}-{px:.1f}*(1-on/{d})"
+            y_expr = f"{cy}-{py:.1f}*(1-on/{d})"
+        else:                 # type 0: 纯居中放大
+            x_expr = cx
+            y_expr = cy
+
+        zoompan = (
+            f"zoompan=z={z_expr}:x={x_expr}:y={y_expr}"
+            f":d={d}:s={zw}x{zh}:fps={self.fps}"
+        )
+
+        drawtext = self._drawtext_expr(text)
+
+        # 淡入淡出时长（秒）
+        fade_duration = 0.3
+        fade_frames = int(fade_duration * self.fps)
+
+        # 视频滤镜链：缩放 → Ken Burns → 缩放回目标尺寸 → 字幕 → 淡入淡出
+        vf = (
+            f"scale={upw}:{uph}:force_original_aspect_ratio=decrease,"
+            f"pad={upw}:{uph}:(ow-iw)/2:(oh-ih)/2:black,"
+            f"{zoompan},"
+            f"scale={self.width}:{self.height}:flags=lanczos,"
+            f"{drawtext},"
+            f"fade=t=in:st=0:d={fade_duration},"
+            f"fade=t=out:st={duration_s - fade_duration}:d={fade_duration}"
+        )
+
+        output_path = str(Path(tmp_dir) / f"seg_{index:04d}.mp4")
+
+        cmd = [
+            self._ffmpeg,
+            "-y",
+            "-loop", "1",
+            "-i", image_path,
+        ]
+
+        if audio_path:
+            cmd += ["-i", audio_path]
+
+        cmd += [
+            "-vf", vf,
+        ]
+
+        if audio_path:
+            # 音频降噪 + 淡入淡出
+            af = (
+                f"highpass=f=80,afftdn=nf=-25,"
+                f"afade=t=in:st=0:d={fade_duration},"
+                f"afade=t=out:st={duration_s - fade_duration}:d={fade_duration}"
+            )
+            cmd += ["-map", "0:v", "-map", "1:a", "-af", af]
+
+        cmd += [
+            "-c:v", self._encoder,
+        ]
+        if self._use_crf:
+            cmd += ["-preset", self.preset, "-crf", str(self.crf)]
+        cmd += [
+            "-pix_fmt", "yuv420p",
+            "-profile:v", "baseline",
+            "-level", "3.0",
+        ]
+
+        if audio_path:
+            cmd += ["-c:a", "aac", "-b:a", "192k", "-ar", "24000", "-ac", "1"]
+
+        cmd += [
+            "-t", f"{duration_s:.3f}",
+            "-shortest",
+            output_path,
+        ]
+
+        logger.info(f"  [FFmpeg 段 {index+1}] 编码 {duration_s:.1f}s ...")
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=300,
+            encoding="utf-8", errors="replace",
+        )
+        if result.returncode != 0:
+            logger.error(f"  [FFmpeg 段 {index+1}] 编码失败:\n{result.stderr[-500:]}")
+            raise RuntimeError(f"FFmpeg segment {index} failed: {result.stderr[-200:]}")
+
+        return output_path
+
+    # ── 拼接 ──────────────────────────────────────────────────────
+
+    def _concat_clips(self, clip_paths: List[str], output_path: str) -> str:
+        """使用 concat demuxer 拼接视频片段（简单高效）"""
+        if len(clip_paths) == 1:
+            # 只有一段，直接复制
+            shutil.copy2(clip_paths[0], output_path)
+            return output_path
+
+        logger.info(f"  [FFmpeg] 拼接 {len(clip_paths)} 段视频")
+
+        # 创建 concat 列表文件
+        import tempfile
+        concat_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
+        try:
+            for clip in clip_paths:
+                # 使用绝对路径，避免路径问题
+                abs_path = str(Path(clip).resolve()).replace('\\', '/')
+                concat_file.write(f"file '{abs_path}'\n")
+            concat_file.close()
+
+            # 使用 concat demuxer 拼接（无需重新编码，速度快）
+            cmd = [
+                self._ffmpeg, "-y",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", concat_file.name,
+                "-c", "copy",
+                "-movflags", "+faststart",
+                output_path,
+            ]
+
+            logger.info(f"  [FFmpeg] 执行拼接命令...")
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=120,
+                encoding="utf-8", errors="replace",
+            )
+            if result.returncode != 0:
+                logger.error(f"  [FFmpeg] 拼接失败:\n{result.stderr[-500:]}")
+                raise RuntimeError(f"FFmpeg concat failed: {result.stderr[-200:]}")
+
+            return output_path
+
+        finally:
+            # 清理临时文件
+            try:
+                Path(concat_file.name).unlink()
+            except Exception:
+                pass
+
+    # ── 主入口 ─────────────────────────────────────────────────────
+
+    def export(
+        self,
+        segments: List[str],
+        media_paths: List[str],
+        voiceover_files: Optional[List[str]],
+        output_path: str,
+        animation_seed: Optional[int] = None,
+    ) -> str:
+        logger.info(f"[FFmpeg] 开始导出 MP4，共 {len(segments)} 段")
+
+        rng = random.Random(animation_seed)
+
+        # 预生成每段的 Ken Burns 参数
+        # 7 种运动：0=纯放大, 1=左移, 2=右移, 3=上移, 4=下移, 5=左上→右下, 6=右下→左上
+        # 纯放大占 30%，其余六种各约 12%
+        anim_params = []
+        for _ in segments:
+            scale_end = rng.uniform(1.05, 1.12)
+            anim_type = rng.choices(
+                [0, 1, 2, 3, 4, 5, 6],
+                weights=[30, 12, 12, 12, 12, 11, 11],
+            )[0]
+            anim_params.append((anim_type, scale_end))
+
+        tmp_dir = tempfile.mkdtemp(prefix="ffmpeg_export_")
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            # 并行编码各段
+            clip_paths = [None] * len(segments)
+
+            def encode_one(i):
+                vo = None
+                if voiceover_files and i < len(voiceover_files):
+                    vo = voiceover_files[i]
+                at, se = anim_params[i]
+                return i, self._build_segment_clip(
+                    index=i,
+                    image_path=media_paths[i],
+                    audio_path=vo,
+                    text=segments[i],
+                    anim_type=at,
+                    scale_end=se,
+                    tmp_dir=tmp_dir,
+                )
+
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                futures = [pool.submit(encode_one, i) for i in range(len(segments))]
+                for f in as_completed(futures):
+                    idx, path = f.result()
+                    clip_paths[idx] = path
+
+            # 拼接
+            self._concat_clips(clip_paths, output_path)
+            logger.info(f"[FFmpeg] MP4 导出完成: {output_path}")
+            return output_path
+
+        finally:
+            # 清理临时目录
+            shutil.rmtree(tmp_dir, ignore_errors=True)

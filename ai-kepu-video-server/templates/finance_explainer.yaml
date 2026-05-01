@@ -1,0 +1,53 @@
+# 视频模板：理财科普类
+# 运营人员可以直接编辑这个文件来调整视觉风格，不用改 Python 代码
+
+name: "finance_explainer"
+description: "理财科普短视频默认模板（9:16 竖屏）"
+
+canvas:
+  width: 1080
+  height: 1920
+
+# ----- 字幕 -----
+subtitle:
+  font: "文轩体"
+  size: 8.0
+  color: [1.0, 1.0, 1.0]      # 白色 (R, G, B 取值 0-1)
+  position_y: -0.75            # 屏幕底部 (取值 -1~1，-1=最下，1=最上)
+  border:
+    enabled: true
+    color: [0.0, 0.0, 0.0]    # 黑色描边
+    width: 2
+
+# ----- 图片 -----
+image:
+  # Ken Burns 慢推效果（图片缓慢放大）
+  ken_burns:
+    enabled: true
+    zoom_start: 1.0
+    zoom_end: 1.15
+  # 图片之间的转场
+  transition:
+    enabled: true
+    duration_sec: 0.5
+
+# ----- 背景音乐 -----
+bgm:
+  enabled: true
+  volume: 0.15                 # 配音之外的音量
+  fade_in_sec: 2.0
+  fade_out_sec: 3.0
+
+# ----- 免责声明叠加层 -----
+disclaimer:
+  enabled: true
+  text: "本内容仅供学习参考，不构成投资建议"
+  position_y: 0.85             # 屏幕顶部
+  duration_sec: 3.0            # 显示时长
+  font_size: 4.0
+  color: [1.0, 1.0, 0.6]       # 浅黄色
+
+# ----- 配音参数（覆盖全局 config.yaml 的 tts 段）-----
+tts:
+  voice: "zh-CN-YunxiNeural"
+  rate: "+5%"

@@ -1,0 +1,176 @@
+/**
+ * 任务 API
+ * 创建任务、查询任务状态
+ */
+
+import request from './request'
+
+/**
+ * 获取可用的 TTS 音色列表
+ * @returns {Promise<Array>} 音色列表
+ */
+export function getVoices() {
+  return request({
+    url: '/ai/native/video/kepu/voices',
+    method: 'get'
+  })
+}
+
+export function getConfig() {
+  return request({
+    url: '/ai/native/video/kepu/config',
+    method: 'get'
+  })
+}
+
+export function updateConfig(data) {
+  return request({
+    url: '/ai/native/video/kepu/config',
+    method: 'put',
+    data
+  })
+}
+
+/**
+ * 创建视频生成任务
+ * @param {Object} data - 任务参数
+ * @param {string} data.theme - 视频主题或剧本文案（最多 2000 字）
+ * @param {string} data.style - 文章风格
+ * @param {number} data.length - 脚本字数（主题模式使用）
+ * @param {string} data.visual_style - 画面风格（写实风格/电影级/油彩画/毛毡风）
+ * @param {string} data.ratio - 画幅比例（16:9/9:16）
+ * @param {string} data.voice_type - TTS 音色 ID（可选）
+ * @returns {Promise<{task_id: string, status: string}>}
+ */
+export function createTask(data) {
+  return request({
+    url: '/ai/native/video/kepu/tasks',
+    method: 'post',
+    data
+  })
+}
+
+/**
+ * 查询任务状态
+ * @param {string} taskId - 任务ID
+ * @returns {Promise<Object>} 任务详情
+ */
+export function getTaskStatus(taskId) {
+  return request({
+    url: `/ai/native/video/kepu/tasks/${taskId}`,
+    method: 'get'
+  })
+}
+
+/**
+ * 取消任务（预留接口）
+ * @param {string} taskId - 任务ID
+ * @returns {Promise<{success: boolean}>}
+ */
+export function cancelTask(taskId) {
+  return request({
+    url: `/ai/native/video/kepu/tasks/${taskId}`,
+    method: 'delete'
+  })
+}
+
+/**
+ * 获取任务段落列表
+ * @param {string} taskId - 任务ID
+ * @returns {Promise<Array>} 段落列表
+ */
+export function getSegments(taskId) {
+  return request({
+    url: `/ai/native/video/kepu/tasks/${taskId}/segments`,
+    method: 'get'
+  })
+}
+
+/**
+ * 更新段落内容
+ * @param {string} taskId - 任务ID
+ * @param {number} segmentIndex - 段落索引
+ * @param {Object} data - 更新数据
+ * @param {string} data.text - 新文案（可选）
+ * @param {string} data.image_url - 新图片URL（可选）
+ * @param {string} data.audio_url - 新音频URL（可选）
+ * @returns {Promise<{message: string}>}
+ */
+export function updateSegment(taskId, segmentIndex, data) {
+  return request({
+    url: `/ai/native/video/kepu/tasks/${taskId}/segments/${segmentIndex}`,
+    method: 'put',
+    data
+  })
+}
+
+/**
+ * 重新生成段落图片
+ * @param {string} taskId - 任务ID
+ * @param {number} segmentIndex - 段落索引
+ * @returns {Promise<{message: string, image_path: string, image_url: string}>}
+ */
+export function regenerateImage(taskId, segmentIndex) {
+  return request({
+    url: `/ai/native/video/kepu/tasks/${taskId}/segments/${segmentIndex}/regenerate-image`,
+    method: 'post',
+    timeout: 180000  // 3分钟超时
+  })
+}
+
+/**
+ * 上传自定义图片
+ * @param {string} taskId - 任务ID
+ * @param {number} segmentIndex - 段落索引
+ * @param {File} file - 图片文件
+ * @returns {Promise<{message: string, image_path: string, image_url: string}>}
+ */
+export function uploadImage(taskId, segmentIndex, file) {
+  const formData = new FormData()
+  formData.append('file', file)
+  return request({
+    url: `/ai/native/video/kepu/tasks/${taskId}/segments/${segmentIndex}/upload-image`,
+    method: 'post',
+    data: formData,
+    headers: {
+      'Content-Type': 'multipart/form-data'
+    },
+    timeout: 60000  // 1分钟超时
+  })
+}
+
+/**
+ * 重新生成段落音频
+ * @param {string} taskId - 任务ID
+ * @param {number} segmentIndex - 段落索引
+ * @param {string} voiceType - TTS 音色 ID（可选）
+ * @returns {Promise<{message: string, audio_path: string}>}
+ */
+export function regenerateAudio(taskId, segmentIndex, voiceType = null) {
+  return request({
+    url: `/ai/native/video/kepu/tasks/${taskId}/segments/${segmentIndex}/regenerate-audio`,
+    method: 'post',
+    params: voiceType ? { voice_type: voiceType } : {},
+    timeout: 120000  // 2分钟超时
+  })
+}
+
+/**
+ * 重新构建草稿和视频
+ * @param {string} taskId - 任务ID
+ * @returns {Promise<{message: string, draft_path: string, video_path: string}>}
+ */
+export function rebuildDraft(taskId) {
+  return request({
+    url: `/ai/native/video/kepu/tasks/${taskId}/rebuild`,
+    method: 'post'
+  })
+}
+
+export function listTasks(status, limit = 20, offset = 0) {
+  return request({
+    url: '/ai/native/video/kepu/tasks',
+    method: 'get',
+    params: { status, limit, offset }
+  })
+}

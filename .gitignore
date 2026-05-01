@@ -1,0 +1,36 @@
+# Local secrets
+.env
+.env.*
+!.env.example
+data/
+
+# Dependencies and build outputs
+node_modules/
+dist/
+dist-ssr/
+.vite/
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+build/
+
+# Generated media and logs
+output/
+output_licai/
+logs/
+*.log
+*.bak
+*.tmp
+
+# Local tooling and OS files
+.claude/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+

@@ -1,0 +1,467 @@
+"""
+SQLite 数据库客户端
+本地开发用，替代远程 MySQL
+接口与 MySQLClient 完全兼容
+"""
+
+import logging
+import sqlite3
+import os
+from datetime import datetime
+from typing import Optional, List, Dict
+from contextlib import contextmanager
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+DB_PATH = Path(__file__).parent.parent.parent / "data" / "local.db"
+
+
+class SQLiteClient:
+    """SQLite 数据库客户端（兼容 MySQLClient 接口）"""
+
+    def __init__(self):
+        self._initialized = False
+
+    def _init_db(self):
+        """初始化数据库和表结构"""
+        if self._initialized:
+            return
+
+        try:
+            DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(str(DB_PATH))
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cursor.executescript("""
+                CREATE TABLE IF NOT EXISTS tasks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL UNIQUE,
+                    name TEXT,
+                    theme TEXT NOT NULL,
+                    style TEXT NOT NULL DEFAULT '温暖感人',
+                    length INTEGER NOT NULL DEFAULT 300,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    current_step TEXT DEFAULT 'pending',
+                    error TEXT,
+                    extract_path TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                    completed_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS task_results (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL UNIQUE,
+                    draft_path TEXT NOT NULL,
+                    draft_url TEXT,
+                    video_url TEXT,
+                    segments_count INTEGER NOT NULL DEFAULT 0,
+                    total_duration REAL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+                );
+
+                CREATE TABLE IF NOT EXISTS task_steps (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL,
+                    step_name TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    progress INTEGER,
+                    total INTEGER,
+                    duration REAL,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+                );
+
+                CREATE TABLE IF NOT EXISTS tts_voices (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    voice_id TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL,
+                    gender TEXT NOT NULL,
+                    description TEXT,
+                    is_enabled INTEGER NOT NULL DEFAULT 1,
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+                );
+
+                CREATE TABLE IF NOT EXISTS task_segments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL,
+                    segment_index INTEGER NOT NULL,
+                    text TEXT NOT NULL,
+                    image_path TEXT,
+                    image_url TEXT,
+                    audio_path TEXT,
+                    audio_url TEXT,
+                    duration REAL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                    UNIQUE(task_id, segment_index)
+                );
+            """)
+
+            # 插入默认音色数据（如果表为空）
+            cursor.execute("SELECT COUNT(*) FROM tts_voices")
+            if cursor.fetchone()[0] == 0:
+                voices = [
+                    ('zh_female_shuangkuaisisi_moon_bigtts', '爽快思思', 'female', '活泼开朗，适合轻松愉快的内容', 1, 100),
+                    ('zh_female_wanwanxiaohe_moon_bigtts', '弯弯小鹤', 'female', '温柔甜美，适合温馨治愈的内容', 1, 90),
+                    ('zh_female_tianmeibeibei_moon_bigtts', '甜美贝贝', 'female', '甜美可爱，适合少女风格内容', 1, 80),
+                    ('zh_female_qingxinruoxi_moon_bigtts', '清新若溪', 'female', '清新自然，适合文艺清新内容', 1, 70),
+                    ('zh_female_wenrouxiaoya_moon_bigtts', '温柔小雅', 'female', '温柔知性，适合知识科普内容', 1, 60),
+                    ('zh_female_mizai_uranus_bigtts', '米仔', 'female', '自然真实，适合故事讲述', 1, 50),
+                    ('zh_male_wennuanahu_moon_bigtts', '温暖阿虎', 'male', '温暖磁性，适合情感类内容', 1, 40),
+                    ('zh_male_qingchexiaoxin_moon_bigtts', '清澈小新', 'male', '清澈明朗，适合青春活力内容', 1, 30),
+                    ('zh_male_yangguangxiaolei_moon_bigtts', '阳光小磊', 'male', '阳光开朗，适合励志正能量内容', 1, 20),
+                    ('zh_male_chenwendongge_moon_bigtts', '沉稳东哥', 'male', '沉稳大气，适合严肃专业内容', 1, 10),
+                ]
+                cursor.executemany(
+                    "INSERT INTO tts_voices (voice_id, name, gender, description, is_enabled, sort_order) VALUES (?,?,?,?,?,?)",
+                    voices
+                )
+
+            conn.commit()
+            conn.close()
+            self._initialized = True
+            logger.info(f"SQLite 数据库初始化成功: {DB_PATH}")
+        except Exception as e:
+            logger.error(f"SQLite 数据库初始化失败: {e}")
+            self._initialized = False
+
+    def _get_conn(self):
+        """获取数据库连接"""
+        if not self._initialized:
+            self._init_db()
+        conn = sqlite3.connect(str(DB_PATH))
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    @contextmanager
+    def get_connection(self):
+        """获取数据库连接（上下文管理器，兼容 MySQLClient 接口）"""
+        if not self._initialized:
+            self._init_db()
+        if not self._initialized:
+            logger.warning("SQLite 不可用，跳过数据库操作")
+            yield None
+            return
+        conn = self._get_conn()
+        try:
+            yield conn
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"数据库操作失败: {e}")
+            raise
+        finally:
+            conn.close()
+
+    def _row_to_dict(self, row):
+        """将 sqlite3.Row 转为 dict"""
+        if row is None:
+            return None
+        return dict(row)
+
+    def _rows_to_dicts(self, rows):
+        return [dict(r) for r in rows]
+
+    def create_task(self, task_id: str, theme: str, style: str, length: int, name: str = None) -> bool:
+        if not self._initialized:
+            self._init_db()
+        if not self._initialized:
+            return False
+        try:
+            conn = self._get_conn()
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO tasks (task_id, name, theme, style, length, status, current_step) VALUES (?,?,?,?,?,?,?)",
+                (task_id, name or theme[:20], theme, style, length, 'pending', 'pending')
+            )
+            steps = [
+                "text_generation",
+                "image_prompt_generation",
+                "voiceover_generation",
+                "image_generation",
+                "draft_building",
+                "video_synthesis",
+            ]
+            for step in steps:
+                cur.execute(
+                    "INSERT INTO task_steps (task_id, step_name, status) VALUES (?,?,?)",
+                    (task_id, step, 'pending')
+                )
+            conn.commit()
+            conn.close()
+            logger.info(f"任务记录创建成功: {task_id}")
+            return True
+        except Exception as e:
+            logger.error(f"创建任务记录失败: {e}")
+            return False
+
+    def update_task_status(self, task_id: str, status: str, current_step: str = None, error: str = None) -> bool:
+        if not self._initialized:
+            self._init_db()
+        if not self._initialized:
+            return False
+        try:
+            conn = self._get_conn()
+            cur = conn.cursor()
+            if status == "completed":
+                cur.execute(
+                    "UPDATE tasks SET status=?, current_step=?, error=?, completed_at=datetime('now','localtime'), updated_at=datetime('now','localtime') WHERE task_id=?",
+                    (status, current_step, error, task_id)
+                )
+            else:
+                cur.execute(
+                    "UPDATE tasks SET status=?, current_step=?, error=?, updated_at=datetime('now','localtime') WHERE task_id=?",
+                    (status, current_step, error, task_id)
+                )
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            logger.error(f"更新任务状态失败: {e}")
+            return False
+
+    def save_task_result(self, task_id: str, draft_path: str, segments_count: int,
+                         draft_url: str = None, video_url: str = None, total_duration: float = None) -> bool:
+        if not self._initialized:
+            self._init_db()
+        if not self._initialized:
+            return False
+        try:
+            conn = self._get_conn()
+            cur = conn.cursor()
+            cur.execute(
+                """INSERT INTO task_results (task_id, draft_path, draft_url, video_url, segments_count, total_duration)
+                   VALUES (?,?,?,?,?,?)
+                   ON CONFLICT(task_id) DO UPDATE SET
+                   draft_path=excluded.draft_path, draft_url=excluded.draft_url,
+                   video_url=excluded.video_url, segments_count=excluded.segments_count,
+                   total_duration=excluded.total_duration""",
+                (task_id, draft_path, draft_url, video_url, segments_count, total_duration)
+            )
+            conn.commit()
+            conn.close()
+            logger.info(f"任务结果保存成功: {task_id}")
+            return True
+        except Exception as e:
+            logger.error(f"保存任务结果失败: {e}")
+            return False
+
+    def update_step(self, task_id: str, step_name: str, status: str,
+                    progress: int = None, total: int = None, duration: float = None) -> bool:
+        if not self._initialized:
+            self._init_db()
+        if not self._initialized:
+            return False
+        try:
+            conn = self._get_conn()
+            cur = conn.cursor()
+            if status == "processing":
+                cur.execute(
+                    "UPDATE task_steps SET status=?, started_at=datetime('now','localtime'), updated_at=datetime('now','localtime') WHERE task_id=? AND step_name=?",
+                    (status, task_id, step_name)
+                )
+            elif status == "completed":
+                cur.execute(
+                    "UPDATE task_steps SET status=?, progress=?, total=?, duration=?, completed_at=datetime('now','localtime'), updated_at=datetime('now','localtime') WHERE task_id=? AND step_name=?",
+                    (status, progress, total, duration, task_id, step_name)
+                )
+            else:
+                cur.execute(
+                    "UPDATE task_steps SET status=?, progress=?, total=?, updated_at=datetime('now','localtime') WHERE task_id=? AND step_name=?",
+                    (status, progress, total, task_id, step_name)
+                )
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            logger.error(f"更新步骤状态失败: {e}")
+            return False
+
+    def get_task(self, task_id: str) -> Optional[Dict]:
+        if not self._initialized:
+            self._init_db()
+        if not self._initialized:
+            return None
+        try:
+            conn = self._get_conn()
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,))
+            task = cur.fetchone()
+            if not task:
+                conn.close()
+                return None
+            task = dict(task)
+
+            cur.execute("SELECT * FROM task_results WHERE task_id=?", (task_id,))
+            result = cur.fetchone()
+            task["result"] = dict(result) if result else None
+
+            cur.execute("SELECT * FROM task_steps WHERE task_id=? ORDER BY id", (task_id,))
+            steps = [dict(r) for r in cur.fetchall()]
+            task["steps"] = steps
+
+            conn.close()
+            return task
+        except Exception as e:
+            logger.error(f"获取任务信息失败: {e}")
+            return None
+
+    def get_enabled_voices(self) -> List[Dict]:
+        if not self._initialized:
+            self._init_db()
+        if not self._initialized:
+            return []
+        try:
+            conn = self._get_conn()
+            cur = conn.cursor()
+            cur.execute("SELECT voice_id, name, gender, description, sort_order FROM tts_voices WHERE is_enabled=1 ORDER BY sort_order DESC, id ASC")
+            rows = [dict(r) for r in cur.fetchall()]
+            conn.close()
+            return rows
+        except Exception as e:
+            logger.error(f"获取音色列表失败: {e}")
+            return []
+
+    def update_voice_status(self, voice_id: str, is_enabled: bool) -> bool:
+        if not self._initialized:
+            self._init_db()
+        if not self._initialized:
+            return False
+        try:
+            conn = self._get_conn()
+            cur = conn.cursor()
+            cur.execute("UPDATE tts_voices SET is_enabled=? WHERE voice_id=?", (1 if is_enabled else 0, voice_id))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            logger.error(f"更新音色状态失败: {e}")
+            return False
+
+    def update_extract_path(self, task_id: str, extract_path: str) -> bool:
+        if not self._initialized:
+            self._init_db()
+        if not self._initialized:
+            return False
+        try:
+            conn = self._get_conn()
+            cur = conn.cursor()
+            cur.execute("UPDATE tasks SET extract_path=? WHERE task_id=?", (extract_path, task_id))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            logger.error(f"更新解压路径失败: {e}")
+            return False
+
+    def list_tasks(self, status: str = None, limit: int = 100, offset: int = 0) -> List[Dict]:
+        if not self._initialized:
+            self._init_db()
+        if not self._initialized:
+            return []
+        try:
+            conn = self._get_conn()
+            cur = conn.cursor()
+            if status:
+                cur.execute(
+                    """SELECT t.*, r.draft_url, r.video_url, r.segments_count
+                       FROM tasks t LEFT JOIN task_results r ON t.task_id = r.task_id
+                       WHERE t.status=? ORDER BY t.created_at DESC LIMIT ? OFFSET ?""",
+                    (status, limit, offset)
+                )
+            else:
+                cur.execute(
+                    """SELECT t.*, r.draft_url, r.video_url, r.segments_count
+                       FROM tasks t LEFT JOIN task_results r ON t.task_id = r.task_id
+                       ORDER BY t.created_at DESC LIMIT ? OFFSET ?""",
+                    (limit, offset)
+                )
+            rows = [dict(r) for r in cur.fetchall()]
+            conn.close()
+            return rows
+        except Exception as e:
+            logger.error(f"获取任务列表失败: {e}")
+            return []
+
+    def save_segments(self, task_id: str, segments: List[Dict]) -> bool:
+        if not self._initialized:
+            self._init_db()
+        if not self._initialized:
+            return False
+        try:
+            conn = self._get_conn()
+            cur = conn.cursor()
+            for seg in segments:
+                cur.execute(
+                    """INSERT INTO task_segments (task_id, segment_index, text, image_path, image_url, audio_path, audio_url, duration)
+                       VALUES (?,?,?,?,?,?,?,?)
+                       ON CONFLICT(task_id, segment_index) DO UPDATE SET
+                       text=excluded.text, image_path=excluded.image_path, image_url=excluded.image_url,
+                       audio_path=excluded.audio_path, audio_url=excluded.audio_url, duration=excluded.duration""",
+                    (task_id, seg['segment_index'], seg['text'],
+                     seg.get('image_path'), seg.get('image_url'),
+                     seg.get('audio_path'), seg.get('audio_url'), seg.get('duration'))
+                )
+            conn.commit()
+            conn.close()
+            logger.info(f"任务段落保存成功: {task_id}, 共 {len(segments)} 段")
+            return True
+        except Exception as e:
+            logger.error(f"保存任务段落失败: {e}")
+            return False
+
+    def get_segments(self, task_id: str) -> List[Dict]:
+        if not self._initialized:
+            self._init_db()
+        if not self._initialized:
+            return []
+        try:
+            conn = self._get_conn()
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM task_segments WHERE task_id=? ORDER BY segment_index ASC", (task_id,))
+            rows = [dict(r) for r in cur.fetchall()]
+            conn.close()
+            return rows
+        except Exception as e:
+            logger.error(f"获取任务段落失败: {e}")
+            return []
+
+    def update_segment(self, task_id: str, segment_index: int, updates: Dict) -> bool:
+        if not self._initialized:
+            self._init_db()
+        if not self._initialized:
+            return False
+        try:
+            conn = self._get_conn()
+            cur = conn.cursor()
+            set_parts = []
+            values = []
+            for key, value in updates.items():
+                if key in ['text', 'image_path', 'image_url', 'audio_path', 'audio_url', 'duration']:
+                    set_parts.append(f"{key}=?")
+                    values.append(value)
+            if not set_parts:
+                conn.close()
+                return False
+            values.extend([task_id, segment_index])
+            cur.execute(
+                f"UPDATE task_segments SET {', '.join(set_parts)} WHERE task_id=? AND segment_index=?",
+                values
+            )
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            logger.error(f"更新段落失败: {e}")
+            return False
+
+
+# 全局 SQLite 客户端实例
+sqlite_client = SQLiteClient()

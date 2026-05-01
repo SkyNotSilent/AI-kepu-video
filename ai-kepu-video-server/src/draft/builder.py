@@ -1,0 +1,297 @@
+"""
+草稿构建器
+构建剪映草稿的核心模块
+"""
+
+import json
+import logging
+import os
+import random
+import re
+import shutil
+from pathlib import Path
+from typing import List, Optional
+
+import pyJianYingDraft as draft
+from pyJianYingDraft import (
+    AudioMaterial,
+    AudioSegment,
+    TextSegment,
+    TrackType,
+    VideoMaterial,
+    VideoSegment,
+    Timerange,
+    KeyframeProperty,
+)
+from pyJianYingDraft.metadata.font_meta import FontType
+
+from src.draft.animation_scheduler import AnimationScheduler
+
+# 字幕首尾不允许出现的标点
+_LEADING_PUNCT  = re.compile(r'^[。！？!?…，,；;、：:]+')
+_TRAILING_PUNCT = re.compile(r'[。！？!?…，,；;、]+$')
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_IMAGE_DURATION_US = 4_000_000  # 4 秒（无配音时使用）
+
+
+class DraftBuilder:
+    """草稿构建器 - 构建剪映草稿"""
+
+    def __init__(
+        self,
+        config_path: str = "config/settings.json",
+        template_dir: str = "config/templates",
+    ):
+        self.config_path = Path(config_path)
+        self.template_dir = Path(template_dir)
+        self.config = self._load_config()
+
+    def _load_config(self) -> dict:
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"加载配置失败，使用默认值: {e}")
+            return {
+                "canvas": {"width": 1920, "height": 1080, "fps": 30},
+                "draft_path": "output/drafts",
+            }
+
+    def _add_ken_burns(self, video_seg: VideoSegment, duration_us: int, rng: random.Random):
+        """给图片段落加 Ken Burns 关键帧动画（轻微放大为主，偶尔平移）"""
+        # 起始缩放：1.0，结束缩放：1.05~1.12（轻微放大）
+        scale_end = rng.uniform(1.05, 1.12)
+
+        # 动画类型：0=纯放大，1=放大+左移，2=放大+右移，3=放大+斜移
+        anim_type = rng.choices([0, 1, 2, 3], weights=[40, 20, 20, 20])[0]
+
+        # scale 关键帧：开始 1.0 → 结束 scale_end
+        video_seg.add_keyframe(KeyframeProperty.scale_x, 0, 1.0)
+        video_seg.add_keyframe(KeyframeProperty.scale_x, duration_us, scale_end)
+        video_seg.add_keyframe(KeyframeProperty.scale_y, 0, 1.0)
+        video_seg.add_keyframe(KeyframeProperty.scale_y, duration_us, scale_end)
+
+        # position 关键帧（轻微平移，单位是画布比例）
+        if anim_type == 1:   # 向左平移
+            video_seg.add_keyframe(KeyframeProperty.position_x, 0, 0.02)
+            video_seg.add_keyframe(KeyframeProperty.position_x, duration_us, -0.02)
+        elif anim_type == 2: # 向右平移
+            video_seg.add_keyframe(KeyframeProperty.position_x, 0, -0.02)
+            video_seg.add_keyframe(KeyframeProperty.position_x, duration_us, 0.02)
+        elif anim_type == 3: # 斜移（左上→右下）
+            video_seg.add_keyframe(KeyframeProperty.position_x, 0, -0.015)
+            video_seg.add_keyframe(KeyframeProperty.position_x, duration_us, 0.015)
+            video_seg.add_keyframe(KeyframeProperty.position_y, 0, -0.015)
+            video_seg.add_keyframe(KeyframeProperty.position_y, duration_us, 0.015)
+
+    def _get_sfx_material(self, sfx_key: str):
+        """音效接口保留（未使用）"""
+        return None
+
+    def build(
+        self,
+        segments: List[str],
+        media_paths: List[str],
+        draft_name: str = "auto_video",
+        voiceover_files: Optional[List[str]] = None,
+        subtitle_files: Optional[List[str]] = None,
+        animation_seed: Optional[int] = None,
+        subtitle_y: Optional[float] = None,  # 字幕垂直位置，None=按画布比例自动选默认值
+        output_dir: Optional[str] = None,  # 草稿输出目录
+    ) -> str:
+        logger.info(f"开始构建草稿: {draft_name}，共 {len(segments)} 段")
+
+        canvas = self.config.get("canvas", {})
+        width  = canvas.get("width", 1920)
+        height = canvas.get("height", 1080)
+        fps    = canvas.get("fps", 30)
+
+        # 使用传入的 output_dir 或配置中的 draft_path
+        if output_dir:
+            draft_path_str = output_dir
+        else:
+            draft_path_str = self.config.get("draft_path", "output/drafts")
+
+        is_landscape = (width / height) >= 1.6  # 16:9 横版
+
+        # 使用传入的 output_dir 作为草稿目录
+        draft_path = Path(draft_path_str)
+        draft_path.mkdir(parents=True, exist_ok=True)
+
+        # 保存素材目录（如果存在），因为 create_draft 会删除整个目录
+        import tempfile
+        temp_backup = None
+        images_dir = draft_path / "images"
+        voiceovers_dir = draft_path / "voiceovers"
+
+        if images_dir.exists() or voiceovers_dir.exists():
+            temp_backup = Path(tempfile.mkdtemp())
+            logger.info(f"备份素材到临时目录: {temp_backup}")
+
+            if images_dir.exists():
+                shutil.copytree(images_dir, temp_backup / "images")
+                logger.info(f"备份 images 目录: {len(list(images_dir.glob('*')))} 个文件")
+
+            if voiceovers_dir.exists():
+                shutil.copytree(voiceovers_dir, temp_backup / "voiceovers")
+                logger.info(f"备份 voiceovers 目录: {len(list(voiceovers_dir.glob('*')))} 个文件")
+
+        # 直接在 draft_path 的父目录创建草稿，使用 draft_path 的名称
+        draft_folder = draft.DraftFolder(draft_path.parent)
+        script = draft_folder.create_draft(
+            draft_path.name, width, height, fps, allow_replace=True
+        )
+        draft_dir = draft_path
+
+        # 恢复素材目录
+        if temp_backup:
+            logger.info(f"恢复素材到草稿目录: {draft_dir}")
+
+            if (temp_backup / "images").exists():
+                shutil.copytree(temp_backup / "images", draft_dir / "images")
+                logger.info(f"恢复 images 目录")
+
+            if (temp_backup / "voiceovers").exists():
+                shutil.copytree(temp_backup / "voiceovers", draft_dir / "voiceovers")
+                logger.info(f"恢复 voiceovers 目录")
+
+            # 清理临时目录
+            shutil.rmtree(temp_backup)
+            logger.info(f"清理临时备份目录")
+
+        # 轨道：视频 / 配音 / 字幕（无音效轨）
+        script.add_track(TrackType.video, "视频轨")
+        script.add_track(TrackType.audio, "配音轨")
+        script.add_track(TrackType.text,  "字幕轨")
+
+        # 生成动画方案
+        scheduler = AnimationScheduler(seed=animation_seed)
+        plans = scheduler.schedule(segments)
+        logger.info(f"动画方案生成完成 (seed={animation_seed})")
+
+        rng = random.Random(animation_seed)
+        cursor_us = 0
+
+        for i, (text, img_path) in enumerate(zip(segments, media_paths)):
+            plan = plans[i]
+            intro_name = plan.intro.name if plan.intro else "渐显"
+            sfx_name   = plan.sfx or "无"
+            dur_ms     = plan.intro_duration // 1000 if plan.intro_duration else 0
+            logger.info(f"  [{i+1}/{len(segments)}] 入场={intro_name}({dur_ms}ms) 音效={sfx_name}")
+
+            # ── 确定此段时长 ──────────────────────────────────────────────
+            segment_dur = DEFAULT_IMAGE_DURATION_US
+            audio_mat   = None
+
+            if voiceover_files and i < len(voiceover_files):
+                vo = voiceover_files[i]
+                if Path(vo).exists():
+                    audio_mat   = AudioMaterial(vo)
+                    segment_dur = audio_mat.duration
+
+            t_range = Timerange(cursor_us, segment_dur)
+
+            # ── 视频/图片轨道 ─────────────────────────────────────────────
+            if Path(img_path).exists():
+                vm = VideoMaterial(img_path)
+                if vm.material_type == "photo":
+                    vs = VideoSegment(vm, t_range)
+                    self._add_ken_burns(vs, segment_dur, rng)
+                    script.add_segment(vs, "视频轨")
+                else:
+                    actual = min(segment_dur, vm.duration)
+                    vs = VideoSegment(vm, Timerange(cursor_us, actual),
+                                      source_timerange=Timerange(0, actual))
+                    script.add_segment(vs, "视频轨")
+            else:
+                logger.warning(f"素材不存在: {img_path}")
+
+            # ── 配音轨道 ──────────────────────────────────────────────────
+            if audio_mat:
+                script.add_segment(
+                    AudioSegment(audio_mat, t_range, volume=1.0),
+                    "配音轨",
+                )
+
+            # ── 字幕轨道（带动画）────────────────────────────────────────
+            # 16:9 横版：字号7，底部居中（transform_y=-0.8）
+            # 9:16 竖版：字号8，底部居中（transform_y=-0.85）
+            # 字体统一：新青年体；首尾不含标点
+            clean_text = _LEADING_PUNCT.sub('', text)
+            clean_text = _TRAILING_PUNCT.sub('', clean_text)
+            if not clean_text:
+                clean_text = text  # 极端情况兜底
+            if is_landscape:
+                text_style = draft.TextStyle(size=7.0, color=(1.0, 1.0, 1.0), align=1)
+                default_y  = -0.8
+            else:
+                text_style = draft.TextStyle(size=8.0, color=(1.0, 1.0, 1.0), align=1)
+                default_y  = -0.85
+            text_clip = draft.ClipSettings(transform_y=subtitle_y if subtitle_y is not None else default_y)
+            border   = draft.TextBorder(color=(0.0, 0.0, 0.0), width=40.0)
+            text_seg = TextSegment(clean_text, t_range, font=FontType.新青年体,
+                                   style=text_style, border=border, clip_settings=text_clip)
+
+            if plan.intro is not None:
+                # 入场时长不能超过 segment 时长的一半
+                safe_dur = min(plan.intro_duration, segment_dur // 2) if plan.intro_duration else None
+                text_seg.add_animation(plan.intro, duration=safe_dur)
+
+            if plan.loop is not None and segment_dur > 1_500_000:
+                text_seg.add_animation(plan.loop)
+
+            script.add_segment(text_seg, "字幕轨")
+
+            cursor_us += segment_dur
+
+        script.save()
+
+        self._convert_paths_to_relative(draft_dir)
+
+        result = str(draft_dir)
+        logger.info(f"草稿构建成功: {result}")
+        return result
+
+    def _convert_paths_to_relative(self, draft_dir: Path):
+        """将 draft_content.json 中的绝对路径转换为相对路径（相对于草稿目录）"""
+        json_path = draft_dir / "draft_content.json"
+        if not json_path.exists():
+            return
+
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        draft_dir_str = str(draft_dir)
+        converted = 0
+
+        if "materials" in data and "videos" in data["materials"]:
+            for video in data["materials"]["videos"]:
+                if "path" in video and os.path.isabs(video["path"]):
+                    try:
+                        rel = os.path.relpath(video["path"], draft_dir_str)
+                        video["path"] = rel.replace("\\", "/")
+                        converted += 1
+                    except ValueError:
+                        pass
+
+        if "materials" in data and "audios" in data["materials"]:
+            for audio in data["materials"]["audios"]:
+                if "path" in audio and os.path.isabs(audio["path"]):
+                    try:
+                        rel = os.path.relpath(audio["path"], draft_dir_str)
+                        audio["path"] = rel.replace("\\", "/")
+                        converted += 1
+                    except ValueError:
+                        pass
+
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"已将 {converted} 个绝对路径转为相对路径")
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    print("DraftBuilder 初始化成功")

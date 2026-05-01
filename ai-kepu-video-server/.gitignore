@@ -1,0 +1,43 @@
+# 生成的素材（不提交）
+output/
+output_licai/
+
+# FFmpeg 二进制（太大不提交）
+assets/ffmpeg/*.exe
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# 剪映草稿备份（不提交）
+*.bak
+*.tmp
+
+# 环境变量文件
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+.claude
+logs
+data/
