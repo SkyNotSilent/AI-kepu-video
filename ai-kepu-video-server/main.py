@@ -1,5 +1,5 @@
 """
-AI 自动剪辑工具 - 主入口
+InsightCut 主入口
 用法: python main.py [主题]
 示例: python main.py 人工智能的未来
 """

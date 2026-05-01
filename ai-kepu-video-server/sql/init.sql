@@ -1,4 +1,4 @@
--- AI 科普视频生成系统数据库初始化脚本
+-- InsightCut 数据库初始化脚本
 
 -- 创建数据库
 CREATE DATABASE IF NOT EXISTS ai_video_generator DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

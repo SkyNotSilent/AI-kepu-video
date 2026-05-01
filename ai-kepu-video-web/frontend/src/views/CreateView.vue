@@ -8,7 +8,7 @@
         <div class="nav-logo">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" ry="2" /></svg>
         </div>
-        <span class="nav-brand">AI 科普视频</span>
+        <span class="nav-brand">InsightCut</span>
       </div>
       <div class="nav-tabs">
         <button class="nav-tab" :class="{ active: activeTab === 'create' }" @click="activeTab = 'create'">
@@ -31,8 +31,8 @@
       <main class="workspace-panel">
         <div class="workspace-header">
           <div>
-            <div class="hero-kicker">AI Video Studio</div>
-            <h1>创建科普视频</h1>
+            <div class="hero-kicker">Cognitive Video Studio</div>
+            <h1>创建认知科普视频</h1>
           </div>
           <div class="workflow-strip">
             <span>脚本</span>

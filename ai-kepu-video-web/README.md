@@ -1,3 +1,13 @@
-# ai-kepu-video-web
+# InsightCut Web
 
-ai-kepu-video 前端h5
+InsightCut 的 Vue 前端工作台。
+
+主要负责：
+
+- 创建认知/科普/心理学等解释型视频任务
+- 配置创作风格、画面风格、配音和脚本长度
+- 查看任务进度和历史资产
+- 预览、编辑分段内容，并导出剪映草稿或 MP4
+- 管理本地模型接口配置
+
+开发入口在 `frontend/` 目录。

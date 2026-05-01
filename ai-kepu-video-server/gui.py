@@ -1,5 +1,5 @@
 """
-AI 自动剪辑工具 - 图形界面
+InsightCut 图形界面
 双击 启动.bat 运行
 """
 
@@ -21,7 +21,7 @@ DRAFT_DIR = Path("D:/edge/JianyingPro Drafts")
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("AI 自动剪辑工具")
+        self.title("InsightCut")
         self.geometry("680x560")
         self.resizable(False, False)
         self.configure(bg="#1e1e2e")
@@ -37,9 +37,9 @@ class App(tk.Tk):
         LOG_BG = "#13131f"
 
         # 标题
-        tk.Label(self, text="AI 自动剪辑工具", bg=BG, fg=FG,
+        tk.Label(self, text="InsightCut", bg=BG, fg=FG,
                  font=("微软雅黑", 16, "bold")).pack(pady=(18, 4))
-        tk.Label(self, text="输入主题 → 自动生成剪映草稿", bg=BG, fg="#888",
+        tk.Label(self, text="输入主题 → 自动生成可编辑视频草稿", bg=BG, fg="#888",
                  font=("微软雅黑", 10)).pack(pady=(0, 14))
 
         # 主题输入区

@@ -19,7 +19,7 @@ if env_path.exists():
         load_dotenv(env_path)
         print(f"已加载环境变量文件: {env_path}")
     except ImportError:
-        print("未安装 python-dotenv，跳过 .env 文件加载（K8s 环境使用 ConfigMap）")
+        print("未安装 python-dotenv，跳过 .env 文件加载（可使用系统环境变量）")
 
 # 配置日志系统
 setup_logging(log_dir="logs", log_level=Config.LOG_LEVEL)
@@ -27,8 +27,8 @@ logger = get_logger(__name__)
 
 # 创建 FastAPI 应用
 app = FastAPI(
-    title="AI 科普视频生成 API",
-    description="输入主题，自动生成剪映草稿",
+    title="InsightCut API",
+    description="批量生成认知科普视频、MP4 与剪映/CapCut 草稿",
     version="1.0.0"
 )
 
@@ -55,7 +55,7 @@ if os.environ.get("USE_REMOTE_DB") != "1":
 async def startup_event():
     """应用启动事件"""
     logger.info("=" * 60)
-    logger.info("AI 科普视频生成 API 启动")
+    logger.info("InsightCut API 启动")
     logger.info(f"API 文档: http://0.0.0.0:8000/docs")
     logger.info(f"健康检查: http://0.0.0.0:8000/health")
     logger.info("=" * 60)
@@ -71,7 +71,7 @@ async def shutdown_event():
 async def root():
     """根路径"""
     return {
-        "message": "AI 科普视频生成 API",
+        "message": "InsightCut API",
         "docs": "/docs",
         "version": "1.0.0"
     }

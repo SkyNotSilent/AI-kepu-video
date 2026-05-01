@@ -12,7 +12,7 @@
       <div class="progress-side">
         <div class="progress-content">
           <h2 class="side-title">生成中</h2>
-          <p class="side-desc">AI 正在为您创作科普视频</p>
+          <p class="side-desc">AI 正在生成可编辑的视频项目</p>
 
           <ProgressBar
             v-if="taskData.progress"
