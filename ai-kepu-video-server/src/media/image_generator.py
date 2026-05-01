@@ -1,13 +1,13 @@
 """
 图片生成模块
-基于豆包 seedream-4-0 API 生成 AI 图像
+基于 OpenAI/兼容图像生成接口生成 AI 图像
 """
 
+import base64
 import logging
-import os
 import time
-import uuid
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 
@@ -32,7 +32,7 @@ STYLE_PRESETS = {
 
 
 class ImageGenerator:
-    """图片生成器 - 豆包 seedream-4-0"""
+    """图片生成器 - OpenAI/兼容 images generations 接口"""
 
     def __init__(self, output_dir: str = "output/images"):
         self.output_dir = Path(output_dir)
@@ -41,6 +41,7 @@ class ImageGenerator:
         self.api_url = self.image_config.get("api_url") or Config.SEEDREAM_API_URL
         self.api_key = self.image_config.get("api_key") or Config.SEEDREAM_API_KEY
         self.model = self.image_config.get("model") or Config.SEEDREAM_MODEL
+        self.size = self.image_config.get("size") or "auto"
 
     def generate(
         self,
@@ -73,7 +74,10 @@ class ImageGenerator:
         suffix = (style_suffix or "").strip() or STYLE_PRESETS.get(style, STYLE_PRESETS["写实风格"])
         full_prompt = f"{prompt}, {suffix}"
 
-        # 尺寸映射（seedream 支持的规格）
+        if not self.api_key:
+            raise ValueError("图像生成 API Key 未配置")
+
+        # 尺寸映射（可配置，auto 时按宽高比选择常见兼容规格）
         size = self._pick_size(width, height)
 
         logger.info(f"生成图像 [{index+1}]: {full_prompt[:60]}...")
@@ -86,9 +90,11 @@ class ImageGenerator:
             "model": self.model,
             "prompt": full_prompt,
             "size": size,
-            "response_format": "url",
-            "stream": False,
         }
+        if not self._is_openai_official_endpoint():
+            # 多数中转/兼容接口支持 response_format=url；官方 gpt-image-1 不需要该字段。
+            payload["response_format"] = "url"
+            payload["stream"] = False
 
         resp = None
         for attempt in range(3):
@@ -104,25 +110,49 @@ class ImageGenerator:
         data = resp.json()
 
         if not data.get("data"):
-            raise RuntimeError(f"seedream 返回异常: {data}")
+            raise RuntimeError(f"图像生成接口返回异常: {data}")
 
-        img_url = data["data"][0]["url"]
-        img_resp = requests.get(img_url, timeout=30)
-        img_resp.raise_for_status()
-
-        output_path.write_bytes(img_resp.content)
-        logger.info(f"图像保存: {output_path} ({len(img_resp.content)} 字节)")
+        image_bytes = self._extract_image_bytes(data)
+        output_path.write_bytes(image_bytes)
+        logger.info(f"图像保存: {output_path} ({len(image_bytes)} 字节)")
         return str(output_path)
 
+    def _is_openai_official_endpoint(self) -> bool:
+        parsed = urlparse(self.api_url)
+        return parsed.netloc in {"api.openai.com", "api.openai.com:443"}
+
+    def _extract_image_bytes(self, data: dict) -> bytes:
+        item = data["data"][0]
+        if item.get("url"):
+            img_resp = requests.get(item["url"], timeout=60)
+            img_resp.raise_for_status()
+            return img_resp.content
+        if item.get("b64_json"):
+            return base64.b64decode(item["b64_json"])
+        if item.get("base64"):
+            return base64.b64decode(item["base64"])
+        raise RuntimeError(f"图像生成接口返回缺少 url/b64_json: {data}")
+
     def _pick_size(self, width: int, height: int) -> str:
-        """根据宽高比选择 seedream 支持的 size 参数"""
+        """根据宽高比选择常见 OpenAI/兼容接口支持的 size 参数。"""
+        if self.size and self.size != "auto":
+            return self.size
+
         ratio = width / height
+        model = (self.model or "").lower()
+        if "dall-e-3" in model or "dalle-3" in model:
+            if ratio >= 1.6:
+                return "1792x1024"
+            elif ratio <= 0.65:
+                return "1024x1792"
+            return "1024x1024"
+
         if ratio >= 1.6:
-            return "1920x1080"  # 16:9 横版
+            return "1536x1024"
         elif ratio <= 0.65:
-            return "1080x1920"  # 9:16 竖版
+            return "1024x1536"
         else:
-            return "1k"         # 其他比例兜底
+            return "1024x1024"
 
 
 if __name__ == "__main__":

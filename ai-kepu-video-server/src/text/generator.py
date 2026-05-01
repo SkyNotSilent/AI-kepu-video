@@ -87,9 +87,7 @@ class ArticleGenerator:
                 resp = requests.post(self.api_url, headers=self.headers, json=payload, timeout=120)
                 resp.raise_for_status()
                 data = resp.json()
-                if self.protocol == "openai":
-                    return data["choices"][0]["message"]["content"]
-                return data["content"][0]["text"]
+                return self._extract_text(data)
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
                 if attempt == 2:  # 最后一次尝试失败
                     logger.error(f"API 调用失败，已重试 3 次: {e}")
@@ -101,6 +99,40 @@ class ArticleGenerator:
                 # HTTP 错误不重试（如 401、403、429 等）
                 logger.error(f"API HTTP 错误: {e}")
                 raise
+
+    def _extract_text(self, data: dict) -> str:
+        """兼容 Anthropic Messages 与 OpenAI Chat Completions 的常见返回格式。"""
+        if self.protocol == "openai":
+            choice = (data.get("choices") or [{}])[0]
+            message = choice.get("message") or {}
+            content = message.get("content")
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                parts = []
+                for item in content:
+                    if isinstance(item, dict):
+                        parts.append(item.get("text") or item.get("content") or "")
+                    elif isinstance(item, str):
+                        parts.append(item)
+                text = "".join(parts).strip()
+                if text:
+                    return text
+            if choice.get("text"):
+                return choice["text"]
+            raise RuntimeError(f"OpenAI 兼容接口返回缺少文本内容: {data}")
+
+        content = data.get("content")
+        if isinstance(content, list):
+            text = "".join(
+                item.get("text", "") if isinstance(item, dict) else str(item)
+                for item in content
+            ).strip()
+            if text:
+                return text
+        if isinstance(content, str):
+            return content
+        raise RuntimeError(f"Anthropic 兼容接口返回缺少文本内容: {data}")
 
     def generate(
         self,

@@ -28,8 +28,11 @@ class Config:
     LLM_PROTOCOL: str = _env("LLM_PROTOCOL", "anthropic")
 
     # 豆包 TTS 配置
+    DOUBAO_TTS_API_URL: str = _env("DOUBAO_TTS_API_URL", "https://openspeech.bytedance.com/api/v1/tts")
     DOUBAO_TTS_APPID: str = _env("DOUBAO_TTS_APPID", "")
     DOUBAO_TTS_TOKEN: str = _env("DOUBAO_TTS_TOKEN", "")
+    DOUBAO_TTS_CLUSTER: str = _env("DOUBAO_TTS_CLUSTER", "volcano_tts")
+    DOUBAO_TTS_DEFAULT_VOICE: str = _env("DOUBAO_TTS_DEFAULT_VOICE", "zh_male_jieshuoxiaoming_moon_bigtts")
 
     # 图像生成配置
     SEEDREAM_API_KEY: str = _env("SEEDREAM_API_KEY", "")
@@ -75,6 +78,14 @@ class Config:
                 "api_url": cls.SEEDREAM_API_URL,
                 "api_key": cls.SEEDREAM_API_KEY,
                 "model": cls.SEEDREAM_MODEL,
+                "size": _env("SEEDREAM_SIZE", "auto"),
+            },
+            "tts": {
+                "api_url": cls.DOUBAO_TTS_API_URL,
+                "appid": cls.DOUBAO_TTS_APPID,
+                "token": cls.DOUBAO_TTS_TOKEN,
+                "cluster": cls.DOUBAO_TTS_CLUSTER,
+                "default_voice": cls.DOUBAO_TTS_DEFAULT_VOICE,
             },
         }
 
@@ -90,7 +101,7 @@ class Config:
         except Exception:
             return config
 
-        for section in ("llm", "image"):
+        for section in ("llm", "image", "tts"):
             if isinstance(overrides.get(section), dict):
                 config[section].update({
                     key: value
@@ -104,7 +115,7 @@ class Config:
         current = cls.load_model_config()
         incoming = config or {}
 
-        for section in ("llm", "image"):
+        for section in ("llm", "image", "tts"):
             if isinstance(incoming.get(section), dict):
                 current[section].update({
                     key: value
@@ -124,3 +135,7 @@ class Config:
     @classmethod
     def image_config(cls) -> dict:
         return cls.load_model_config()["image"]
+
+    @classmethod
+    def tts_config(cls) -> dict:
+        return cls.load_model_config()["tts"]

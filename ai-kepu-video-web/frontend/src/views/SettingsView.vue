@@ -93,6 +93,52 @@
             <span>Model</span>
             <input v-model.trim="form.image.model" class="text-input" placeholder="doubao-seedream-4-0-250828" />
           </label>
+
+          <label class="field">
+            <span>图片尺寸</span>
+            <select v-model="form.image.size" class="text-input">
+              <option value="auto">自动匹配画幅</option>
+              <option value="1024x1024">1024x1024</option>
+              <option value="1536x1024">1536x1024</option>
+              <option value="1024x1536">1024x1536</option>
+              <option value="1792x1024">1792x1024</option>
+              <option value="1024x1792">1024x1792</option>
+              <option value="1920x1080">1920x1080</option>
+              <option value="1080x1920">1080x1920</option>
+            </select>
+          </label>
+        </section>
+
+        <section class="settings-card">
+          <div class="card-header">
+            <h2>配音服务</h2>
+            <span class="card-tag">TTS</span>
+          </div>
+
+          <label class="field">
+            <span>API URL</span>
+            <input v-model.trim="form.tts.api_url" class="text-input" placeholder="https://openspeech.bytedance.com/api/v1/tts" />
+          </label>
+
+          <label class="field">
+            <span>App ID</span>
+            <input v-model.trim="form.tts.appid" class="text-input" autocomplete="off" placeholder="豆包 TTS App ID" />
+          </label>
+
+          <label class="field">
+            <span>Token</span>
+            <input v-model="form.tts.token" class="text-input" type="password" autocomplete="off" placeholder="豆包 TTS Token" />
+          </label>
+
+          <label class="field">
+            <span>Cluster</span>
+            <input v-model.trim="form.tts.cluster" class="text-input" placeholder="volcano_tts" />
+          </label>
+
+          <label class="field">
+            <span>默认音色</span>
+            <input v-model.trim="form.tts.default_voice" class="text-input" placeholder="zh_male_jieshuoxiaoming_moon_bigtts" />
+          </label>
         </section>
       </div>
 
@@ -127,6 +173,14 @@ const form = ref({
     api_url: '',
     api_key: '',
     model: '',
+    size: 'auto',
+  },
+  tts: {
+    api_url: '',
+    appid: '',
+    token: '',
+    cluster: 'volcano_tts',
+    default_voice: '',
   },
 })
 
@@ -147,6 +201,14 @@ async function loadConfig() {
         api_url: config?.image?.api_url || '',
         api_key: config?.image?.api_key || '',
         model: config?.image?.model || '',
+        size: config?.image?.size || 'auto',
+      },
+      tts: {
+        api_url: config?.tts?.api_url || '',
+        appid: config?.tts?.appid || '',
+        token: config?.tts?.token || '',
+        cluster: config?.tts?.cluster || 'volcano_tts',
+        default_voice: config?.tts?.default_voice || '',
       },
     }
   } catch (error) {
@@ -164,6 +226,11 @@ async function saveConfig() {
   if (!form.value.image.api_url.trim()) { showToast('请输入生图 API URL'); return }
   if (!form.value.image.api_key.trim()) { showToast('请输入生图 API Key'); return }
   if (!form.value.image.model.trim()) { showToast('请输入生图模型'); return }
+  if (!form.value.tts.api_url.trim()) { showToast('请输入 TTS API URL'); return }
+  if (!form.value.tts.appid.trim()) { showToast('请输入 TTS App ID'); return }
+  if (!form.value.tts.token.trim()) { showToast('请输入 TTS Token'); return }
+  if (!form.value.tts.cluster.trim()) { showToast('请输入 TTS Cluster'); return }
+  if (!form.value.tts.default_voice.trim()) { showToast('请输入默认音色'); return }
 
   saving.value = true
   try {
