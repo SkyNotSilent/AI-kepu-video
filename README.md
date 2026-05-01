@@ -34,6 +34,6 @@ npm run dev -- --host 127.0.0.1 --port 5173
 
 默认前端连接 `http://localhost:8001`。模型和 API Key 可在前端“模型配置”页填写，配置会保存到后端本地 `data/config.json`。
 
-## 安全说明
+## 配置文件
 
-不要提交 `.env`、`data/config.json`、生成素材、日志或任何真实 API Key。本仓库只保留 `.env.example` 占位示例。
+仓库提供 `.env.example` 作为配置模板；本地运行时复制为 `.env` 后填写自己的模型、TTS 和存储配置。
