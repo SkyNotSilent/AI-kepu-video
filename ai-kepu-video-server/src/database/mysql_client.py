@@ -5,6 +5,7 @@ MySQL 数据库客户端
 
 import logging
 import os
+import uuid
 from datetime import datetime
 from typing import Optional, List, Dict
 from contextlib import contextmanager
@@ -61,6 +62,51 @@ class MySQLClient:
                     return
                 with conn.cursor() as cursor:
                     cursor.execute("ALTER TABLE tasks MODIFY COLUMN theme TEXT NOT NULL COMMENT '视频主题或剧本文案'")
+                    cursor.execute("ALTER TABLE tasks MODIFY COLUMN style VARCHAR(500) NOT NULL DEFAULT '温暖感人' COMMENT '文章风格'")
+                    try:
+                        cursor.execute("ALTER TABLE tasks ADD COLUMN ratio VARCHAR(10) NOT NULL DEFAULT '16:9' COMMENT '视频比例：16:9/9:16/1:1' AFTER style")
+                    except Exception:
+                        pass
+                    try:
+                        cursor.execute("ALTER TABLE tasks ADD COLUMN voice_type VARCHAR(100) COMMENT '任务创建时使用的 TTS 音色 ID' AFTER ratio")
+                    except Exception:
+                        pass
+                    try:
+                        cursor.execute("ALTER TABLE task_segments ADD COLUMN image_prompt TEXT COMMENT 'AI 图片生成提示词' AFTER text")
+                    except Exception:
+                        pass
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS task_assets (
+                            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                            asset_id VARCHAR(32) NOT NULL UNIQUE,
+                            task_id VARCHAR(32) NOT NULL,
+                            segment_index INT,
+                            asset_type VARCHAR(20) NOT NULL,
+                            source VARCHAR(20) NOT NULL,
+                            path VARCHAR(500),
+                            url VARCHAR(500),
+                            label VARCHAR(200),
+                            prompt TEXT,
+                            text TEXT,
+                            voice_type VARCHAR(100),
+                            metadata_json TEXT,
+                            status VARCHAR(20) DEFAULT 'completed',
+                            error_message TEXT,
+                            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                            INDEX idx_task_asset (task_id, asset_type),
+                            INDEX idx_task_segment_asset (task_id, segment_index)
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                    """)
+                    # 为已存在的 task_assets 表添加新字段
+                    try:
+                        cursor.execute("ALTER TABLE task_assets ADD COLUMN status VARCHAR(20) DEFAULT 'completed' COMMENT '资源状态：pending/generating/completed/failed' AFTER metadata_json")
+                    except Exception:
+                        pass
+                    try:
+                        cursor.execute("ALTER TABLE task_assets ADD COLUMN error_message TEXT COMMENT '失败原因' AFTER status")
+                    except Exception:
+                        pass
         except Exception as e:
             logger.warning(f"MySQL schema 更新跳过: {e}")
 
@@ -87,7 +133,7 @@ class MySQLClient:
         finally:
             conn.close()
 
-    def create_task(self, task_id: str, theme: str, style: str, length: int, name: str = None) -> bool:
+    def create_task(self, task_id: str, theme: str, style: str, length: int, name: str = None, ratio: str = "16:9", voice_type: str = None) -> bool:
         """创建任务记录"""
         if not self._initialized:
             self._init_pool()
@@ -102,10 +148,10 @@ class MySQLClient:
 
                 with conn.cursor() as cursor:
                     sql = """
-                        INSERT INTO tasks (task_id, name, theme, style, length, status, current_step)
-                        VALUES (%s, %s, %s, %s, %s, 'pending', 'pending')
+                        INSERT INTO tasks (task_id, name, theme, style, ratio, voice_type, length, status, current_step)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending', 'pending')
                     """
-                    cursor.execute(sql, (task_id, name or theme[:20], theme, style, length))
+                    cursor.execute(sql, (task_id, name or theme[:20], theme, style, ratio, voice_type, length))
 
                     # 初始化步骤记录
                     steps = [
@@ -410,10 +456,11 @@ class MySQLClient:
                 with conn.cursor() as cursor:
                     sql = """
                         INSERT INTO task_segments
-                        (task_id, segment_index, text, image_path, image_url, audio_path, audio_url, duration)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        (task_id, segment_index, text, image_prompt, image_path, image_url, audio_path, audio_url, duration)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON DUPLICATE KEY UPDATE
                         text = VALUES(text),
+                        image_prompt = VALUES(image_prompt),
                         image_path = VALUES(image_path),
                         image_url = VALUES(image_url),
                         audio_path = VALUES(audio_path),
@@ -425,6 +472,7 @@ class MySQLClient:
                             task_id,
                             seg['segment_index'],
                             seg['text'],
+                            seg.get('image_prompt'),
                             seg.get('image_path'),
                             seg.get('image_url'),
                             seg.get('audio_path'),
@@ -479,7 +527,7 @@ class MySQLClient:
                     set_parts = []
                     values = []
                     for key, value in updates.items():
-                        if key in ['text', 'image_path', 'image_url', 'audio_path', 'audio_url', 'duration']:
+                        if key in ['text', 'image_prompt', 'image_path', 'image_url', 'audio_path', 'audio_url', 'duration']:
                             set_parts.append(f"{key} = %s")
                             values.append(value)
 
@@ -497,6 +545,94 @@ class MySQLClient:
         except Exception as e:
             logger.error(f"更新段落失败: {e}")
             return False
+
+    def save_task_asset(self, task_id: str, asset_type: str, source: str, path: str = None,
+                        url: str = None, segment_index: int = None, label: str = None,
+                        prompt: str = None, text: str = None, voice_type: str = None,
+                        metadata_json: str = None, status: str = "completed", error_message: str = None) -> Dict:
+        if not self._initialized:
+            self._init_pool()
+        if not self._initialized:
+            return {}
+        try:
+            with self.get_connection() as conn:
+                if not conn:
+                    return {}
+                with conn.cursor() as cursor:
+                    if path:
+                        cursor.execute(
+                            """SELECT * FROM task_assets
+                               WHERE task_id=%s AND asset_type=%s AND source=%s AND path=%s
+                               ORDER BY id DESC LIMIT 1""",
+                            (task_id, asset_type, source, path)
+                        )
+                        existing = cursor.fetchone()
+                        if existing:
+                            cursor.execute(
+                                """UPDATE task_assets SET segment_index=%s, source=%s, url=%s, label=%s,
+                                   prompt=%s, text=%s, voice_type=%s, metadata_json=%s, status=%s, error_message=%s
+                                   WHERE asset_id=%s""",
+                                (segment_index, source, url, label, prompt, text, voice_type, metadata_json, status, error_message, existing["asset_id"])
+                            )
+                            cursor.execute("SELECT * FROM task_assets WHERE asset_id=%s", (existing["asset_id"],))
+                            return cursor.fetchone()
+
+                    asset_id = uuid.uuid4().hex
+                    cursor.execute(
+                        """INSERT INTO task_assets
+                           (asset_id, task_id, segment_index, asset_type, source, path, url, label, prompt, text, voice_type, metadata_json, status, error_message)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        (asset_id, task_id, segment_index, asset_type, source, path, url, label, prompt, text, voice_type, metadata_json, status, error_message)
+                    )
+                    cursor.execute("SELECT * FROM task_assets WHERE asset_id=%s", (asset_id,))
+                    return cursor.fetchone()
+        except Exception as e:
+            logger.error(f"保存任务资产失败: {e}")
+            return {}
+
+    def list_task_assets(self, task_id: str, asset_type: str = None, segment_index: int = None) -> List[Dict]:
+        if not self._initialized:
+            self._init_pool()
+        if not self._initialized:
+            return []
+        try:
+            with self.get_connection() as conn:
+                if not conn:
+                    return []
+                with conn.cursor() as cursor:
+                    sql = "SELECT * FROM task_assets WHERE task_id=%s"
+                    values = [task_id]
+                    if asset_type:
+                        if asset_type == "upload":
+                            sql += " AND source='upload'"
+                        else:
+                            sql += " AND asset_type=%s"
+                            values.append(asset_type)
+                    if segment_index is not None:
+                        sql += " AND segment_index=%s"
+                        values.append(segment_index)
+                    sql += " ORDER BY created_at DESC, id DESC"
+                    cursor.execute(sql, values)
+                    return cursor.fetchall()
+        except Exception as e:
+            logger.error(f"获取任务资产失败: {e}")
+            return []
+
+    def get_task_asset(self, task_id: str, asset_id: str) -> Optional[Dict]:
+        if not self._initialized:
+            self._init_pool()
+        if not self._initialized:
+            return None
+        try:
+            with self.get_connection() as conn:
+                if not conn:
+                    return None
+                with conn.cursor() as cursor:
+                    cursor.execute("SELECT * FROM task_assets WHERE task_id=%s AND asset_id=%s", (task_id, asset_id))
+                    return cursor.fetchone()
+        except Exception as e:
+            logger.error(f"获取任务资产失败: {e}")
+            return None
 
 
 # 全局 MySQL 客户端实例

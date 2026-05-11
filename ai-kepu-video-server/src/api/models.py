@@ -28,9 +28,19 @@ class CreateTaskRequest(BaseModel):
     """创建任务请求"""
     theme: str = Field(..., min_length=1, max_length=2000, description="视频主题或剧本文案")
     name: Optional[str] = Field(None, max_length=100, description="项目名称")
+    input_mode: str = Field(default="script", description="输入模式：script=写作模式，theme=主题模式")
     style: str = Field(default="温暖感人", description="文章风格")
-    length: int = Field(default=300, ge=50, le=2000, description="主题模式下的目标脚本字数")
+    ratio: str = Field(default="16:9", description="视频比例：16:9/9:16/1:1")
+    length: int = Field(default=300, ge=0, le=2000, description="主题模式下的目标脚本字数；0 表示自动")
     voice_type: Optional[str] = Field(None, description="TTS 音色 ID")
+
+
+class CreateTaskFromImagesRequest(BaseModel):
+    """从本地图片创建任务请求"""
+    style: Optional[str] = Field(default="温暖感人", description="文章风格|画面风格")
+    ratio: Optional[str] = Field(default="16:9", description="视频比例：16:9/9:16/1:1")
+    voice_type: Optional[str] = Field(None, description="TTS 音色 ID")
+    name: Optional[str] = Field(None, max_length=100, description="项目名称")
 
 
 class StepProgress(BaseModel):
@@ -63,6 +73,7 @@ class TaskResponse(BaseModel):
     """任务响应"""
     task_id: str = Field(..., description="任务ID")
     status: TaskStatus = Field(..., description="任务状态")
+    voice_type: Optional[str] = Field(None, description="任务创建时使用的 TTS 音色 ID")
     progress: Optional[TaskProgress] = Field(None, description="任务进度")
     result: Optional[TaskResult] = Field(None, description="任务结果")
     extract_path: Optional[str] = Field(None, description="用户上次使用的解压路径")

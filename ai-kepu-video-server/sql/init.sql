@@ -11,7 +11,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     task_id VARCHAR(32) NOT NULL UNIQUE COMMENT '任务ID（32位UUID）',
     name VARCHAR(100) COMMENT '项目名称',
     theme TEXT NOT NULL COMMENT '视频主题或剧本文案',
-    style VARCHAR(50) NOT NULL DEFAULT '温暖感人' COMMENT '文章风格',
+    style VARCHAR(500) NOT NULL DEFAULT '温暖感人' COMMENT '文章风格',
+    ratio VARCHAR(10) NOT NULL DEFAULT '16:9' COMMENT '视频比例：16:9/9:16/1:1',
+    voice_type VARCHAR(100) COMMENT '任务创建时使用的 TTS 音色 ID',
     length INT NOT NULL DEFAULT 300 COMMENT '主题模式下的目标脚本字数',
     status VARCHAR(20) NOT NULL DEFAULT 'pending' COMMENT '任务状态：pending/processing/completed/failed',
     current_step VARCHAR(50) DEFAULT 'pending' COMMENT '当前步骤',
@@ -76,6 +78,7 @@ CREATE TABLE IF NOT EXISTS task_segments (
     task_id VARCHAR(32) NOT NULL COMMENT '任务ID',
     segment_index INT NOT NULL COMMENT '段落索引（从0开始）',
     text VARCHAR(1000) NOT NULL COMMENT '段落文案',
+    image_prompt TEXT COMMENT 'AI 图片生成提示词',
     image_path VARCHAR(500) COMMENT '图片本地路径',
     image_url VARCHAR(500) COMMENT '图片URL（COS）',
     audio_path VARCHAR(500) COMMENT '音频本地路径',
@@ -86,6 +89,27 @@ CREATE TABLE IF NOT EXISTS task_segments (
     UNIQUE KEY uk_task_segment (task_id, segment_index),
     INDEX idx_task_id (task_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='任务段落表';
+
+-- 任务资产表（图片/音频/字幕/历史上传）
+CREATE TABLE IF NOT EXISTS task_assets (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+    asset_id VARCHAR(32) NOT NULL UNIQUE COMMENT '资产ID',
+    task_id VARCHAR(32) NOT NULL COMMENT '任务ID',
+    segment_index INT COMMENT '关联段落索引',
+    asset_type VARCHAR(20) NOT NULL COMMENT '资产类型：image/audio/subtitle',
+    source VARCHAR(20) NOT NULL COMMENT '来源：generated/regenerated/upload/selected/legacy',
+    path VARCHAR(500) COMMENT '本地路径',
+    url VARCHAR(500) COMMENT '访问 URL',
+    label VARCHAR(200) COMMENT '展示名称',
+    prompt TEXT COMMENT '图片提示词',
+    text TEXT COMMENT '字幕/文案文本',
+    voice_type VARCHAR(100) COMMENT '音频音色 ID',
+    metadata_json TEXT COMMENT '扩展信息 JSON',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    INDEX idx_task_asset (task_id, asset_type),
+    INDEX idx_task_segment_asset (task_id, segment_index)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='任务资产表';
 
 -- 插入默认音色数据
 INSERT INTO tts_voices (voice_id, name, gender, description, is_enabled, sort_order) VALUES

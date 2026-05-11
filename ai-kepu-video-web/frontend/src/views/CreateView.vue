@@ -3,71 +3,180 @@
  */
 <template>
   <div class="create-view">
-    <div class="top-nav">
-      <div class="nav-left">
-        <div class="nav-logo">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" ry="2" /></svg>
-        </div>
-        <span class="nav-brand">InsightCut</span>
-      </div>
-      <div class="nav-tabs">
-        <button class="nav-tab" :class="{ active: activeTab === 'create' }" @click="activeTab = 'create'">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          首页
-        </button>
-        <button class="nav-tab" :class="{ active: activeTab === 'library' }" @click="switchToLibrary">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-          资产记录
-        </button>
-        <button class="nav-tab" @click="router.push('/settings')">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 6v6m9-9h-6m-6 0H3"/></svg>
-          模型配置
-        </button>
-      </div>
-      <div class="nav-right"></div>
-    </div>
+    <NavBar :active-tab="activeTab" @navigate="handleNavigate" />
 
-    <div v-if="activeTab === 'create'" class="create-layout">
-      <main class="workspace-panel">
-        <div class="workspace-header">
-          <div>
-            <div class="hero-kicker">Cognitive Video Studio</div>
+    <main v-if="activeTab === 'create'" class="create-page">
+      <section class="editor-panel">
+        <div class="panel-head">
+          <div class="panel-title-copy">
+            <div class="eyebrow">Cognitive Video Studio</div>
             <h1>创建认知科普视频</h1>
           </div>
-          <div class="workflow-strip">
-            <span>脚本</span>
-            <span>分镜</span>
-            <span>配音</span>
-            <span>草稿</span>
-            <span>MP4</span>
+          <div class="title-field">
+            <label>项目名称</label>
+            <input v-model="form.name" class="name-input" maxlength="100" placeholder="给这条视频起个名字" />
           </div>
-          <button class="settings-link" @click="router.push('/settings')">模型配置</button>
+          <div class="mode-field">
+            <label>模式选择</label>
+            <div class="mode-switch">
+              <button
+                v-for="mode in inputModes"
+                :key="mode.value"
+                type="button"
+                :class="{ active: inputMode === mode.value }"
+                @click="switchInputMode(mode.value)"
+              >
+                {{ mode.label }}
+              </button>
+            </div>
+          </div>
+          <button type="button" class="ghost-btn" @click="router.push('/settings')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 6v6m9-9h-6m-6 0H3"/></svg>
+            模型配置
+          </button>
         </div>
 
-        <div class="workspace-grid">
-          <section class="form-card primary-card">
-            <div class="section-head compact-head">
-              <label class="editor-label">基础内容</label>
-              <span class="hint-text">{{ form.theme.length }}/2000</span>
+        <div class="script-field">
+          <div class="section-head">
+            <label>{{ inputMode === 'theme' ? '视频主题' : '文案内容' }}</label>
+            <span>{{ form.theme.length }}/{{ themeMaxLength }}</span>
+          </div>
+          <div class="textarea-shell">
+            <div v-if="!form.theme && !themeFocused" class="value-rotator">
+              <div class="rotator-placeholder">{{ inputMode === 'theme' ? '输入 100 字以内主题...' : '在此输入您的文案...' }}</div>
+              <div class="rotator-stage">
+                <div
+                  v-if="currentRotatorItem.slot"
+                  :key="`slot-${rotatorIndex}`"
+                  class="slot-group anim-slot"
+                >
+                  <div v-for="(word, idx) in slotWords" :key="word" class="slot-item">
+                    <span class="slot-word" :style="{ animationDelay: `${idx * 150}ms` }">{{ word }}</span>
+                  </div>
+                </div>
+                <div
+                  v-else-if="currentRotatorItem.finale"
+                  :key="`finale-${rotatorIndex}`"
+                  class="rotator-text text-finale anim-finale"
+                >
+                  All in one <span>但不</span>是画布
+                </div>
+                <div
+                  v-else
+                  :key="`text-${rotatorIndex}`"
+                  class="rotator-text"
+                  :class="[currentRotatorItem.class, currentRotatorItem.anim]"
+                >
+                  {{ currentRotatorItem.text }}
+                </div>
+              </div>
             </div>
-
-            <div class="title-row">
-              <input v-model="form.name" class="name-input" placeholder="项目名称" maxlength="100" />
+            <textarea
+              v-model="form.theme"
+              class="theme-textarea"
+              :maxlength="themeMaxLength"
+              :placeholder="inputMode === 'theme' ? '输入 100 字以内的视频主题，例如：为什么普通人越来越需要 AI 助手' : '直接粘贴您的剧本文案...'"
+              @focus="themeFocused = true"
+              @blur="themeFocused = false"
+            ></textarea>
+          </div>
+          <div v-if="inputMode === 'theme'" class="script-length-block">
+            <div class="section-head">
+              <label>生成字数</label>
+              <strong>{{ form.length === 0 ? '自动' : `${form.length} 字` }}</strong>
             </div>
-
-            <div class="theme-area">
-              <textarea
-                v-model="form.theme"
-                class="theme-textarea"
-                placeholder="输入视频主题，或直接粘贴您的剧本文案..."
-                maxlength="2000"
-                rows="7"
-              ></textarea>
+            <div class="length-controls">
+              <input type="range" v-model.number="form.length" min="0" max="2000" step="50" class="slider" />
+              <input v-model.number="form.length" type="number" min="0" max="2000" step="50" class="length-input" @blur="normalizeLength" />
             </div>
+          </div>
+        </div>
 
-            <div class="section-head style-head">
-              <label class="editor-label">创作风格</label>
-              <button class="text-link" @click="openCustomTextStyle">添加</button>
+        <div v-if="inputMode === 'script'" class="assistant-row">
+          <button type="button" class="assistant-btn" @click="showWritingAssistant = true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.7 5.2L19 10l-5.3 1.8L12 17l-1.7-5.2L5 10l5.3-1.8L12 3z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15z"/></svg>
+            写作助手
+          </button>
+          <span>仅 UI 占位，后续接入 AI 改写与分镜建议</span>
+        </div>
+      </section>
+
+      <aside class="config-panel">
+        <div class="config-tabs">
+          <button v-for="tab in configTabs" :key="tab.key" type="button" :class="{ active: configTab === tab.key }" @click="configTab = tab.key">
+            {{ tab.label }}
+          </button>
+        </div>
+
+        <div v-if="configTab === 'visual'" class="tab-body">
+          <div class="toggle-line">
+            <button type="button" :class="{ active: visualSource === 'ai' }" @click="visualSource = 'ai'">智能生成</button>
+            <button type="button" :class="{ active: visualSource === 'upload' }" @click="visualSource = 'upload'">本地上传</button>
+          </div>
+
+          <div v-if="visualSource === 'ai'">
+            <div class="section-head">
+              <label>画面风格</label>
+            </div>
+            <div class="style-grid">
+              <button
+                v-for="opt in allVisualStyleOptions"
+                :key="opt.value"
+                type="button"
+                class="style-card"
+                :class="{ active: form.visual_style === opt.value }"
+                @click="form.visual_style = opt.value"
+              >
+                <img v-if="opt.image" :src="opt.image" :alt="opt.text" />
+                <span v-else class="custom-style-bg">{{ opt.text.slice(0, 2) }}</span>
+                <span class="style-name">{{ opt.text }}</span>
+                <span v-if="opt.custom" class="style-remove" @click.stop="removeCustomVisualStyle(opt.value)">×</span>
+              </button>
+              <button type="button" class="style-card add-style" @click="openCustomVisualStyle">
+                <span>+</span>
+                <strong>自定义</strong>
+              </button>
+            </div>
+          </div>
+
+          <div v-else class="upload-image-block">
+            <div class="section-head">
+              <label>本地图片</label>
+              <span>{{ uploadedImages.length }}/20</span>
+            </div>
+            <div class="upload-image-grid">
+              <div
+                v-for="(item, index) in uploadedImages"
+                :key="item.id"
+                class="upload-image-card"
+                draggable="true"
+                @dragstart="onUploadImageDragStart(index)"
+                @dragover.prevent
+                @drop="onUploadImageDrop(index)"
+                @dragend="dragImageIndex = null"
+              >
+                <img :src="item.url" :alt="`上传图片 ${index + 1}`" />
+                <span class="upload-image-order">{{ index + 1 }}</span>
+                <button type="button" class="upload-image-remove" aria-label="删除图片" @click.stop="removeUploadedImage(index)">×</button>
+              </div>
+              <button type="button" class="upload-image-add" @click="uploadInput?.click()">
+                <span>+</span>
+              </button>
+            </div>
+            <input ref="uploadInput" type="file" multiple accept="image/*" class="hidden-input" @change="onUploadImagesSelected" />
+            <p class="upload-hint">拖拽缩略图调整分镜顺序。</p>
+          </div>
+
+          <div class="ratio-block">
+            <label>视频比例</label>
+            <div class="ratio-options">
+              <button v-for="ratio in videoRatios" :key="ratio" type="button" :class="{ active: videoRatio === ratio }" @click="videoRatio = ratio">{{ ratio }}</button>
+            </div>
+          </div>
+
+          <div class="style-section">
+            <div class="section-head">
+              <label>创作风格</label>
             </div>
             <div class="chip-group">
               <button
@@ -88,115 +197,104 @@
               <button class="inline-primary" @click="addCustomTextStyle">添加</button>
               <button class="inline-secondary" @click="showCustomTextStyle = false">取消</button>
             </div>
-          </section>
-
-          <aside class="form-card config-card">
-            <section class="config-block">
-              <div class="section-head compact-head">
-                <label class="editor-label">画面风格</label>
-                <button class="text-link" @click="openCustomVisualStyle">添加</button>
-              </div>
-              <div class="style-grid">
-                <button
-                  v-for="opt in allVisualStyleOptions"
-                  :key="opt.value"
-                  type="button"
-                  class="style-card"
-                  :class="{ active: form.visual_style === opt.value }"
-                  @click="form.visual_style = opt.value"
-                >
-                  <img v-if="opt.image" :src="opt.image" :alt="opt.text" class="style-img" />
-                  <div v-else class="style-placeholder">{{ opt.text.slice(0, 2) }}</div>
-                  <span class="style-name">{{ opt.text }}</span>
-                  <span v-if="opt.custom" class="style-remove" @click.stop="removeCustomVisualStyle(opt.value)">×</span>
-                </button>
-                <button type="button" class="style-card add-style-card" @click="openCustomVisualStyle">
-                  <span class="add-style-icon">+</span>
-                  <span class="style-name">自定义</span>
-                </button>
-              </div>
-              <div v-if="showCustomVisualStyle" class="custom-visual-panel">
-                <div class="custom-fields">
-                  <input v-model.trim="customVisualForm.name" class="inline-input" placeholder="风格名称，例如：赛博朋克" />
-                  <textarea v-model.trim="customVisualForm.prompt" class="prompt-input" placeholder="英文 prompt 后缀，例如：cyberpunk, neon lights, futuristic city"></textarea>
-                  <label class="upload-line">
-                    <span>预览图</span>
-                    <input type="file" accept="image/*" @change="onCustomVisualImageChange" />
-                  </label>
-                </div>
-                <div class="custom-preview">
-                  <img v-if="customVisualForm.image" :src="customVisualForm.image" alt="自定义预览" />
-                  <span v-else>Preview</span>
-                </div>
-                <div class="custom-actions">
-                  <button class="inline-primary" @click="addCustomVisualStyle">添加</button>
-                  <button class="inline-secondary" @click="showCustomVisualStyle = false">取消</button>
-                </div>
-              </div>
-            </section>
-
-            <section class="config-block control-grid">
-              <div class="row-item">
-                <label class="editor-label">配音音色</label>
-                <button class="voice-picker" @click="showVoicePicker = true">
-                  <span class="voice-name">{{ form.voice_name || '选择音色' }}</span>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9" /></svg>
-                </button>
-              </div>
-              <div v-if="form.theme.trim().length <= 200" class="row-item">
-                <label class="editor-label">脚本字数</label>
-                <div class="length-control">
-                  <input type="range" v-model.number="form.length" :min="50" :max="2000" :step="50" class="length-slider" />
-                  <div class="length-labels">
-                    <span>50</span>
-                    <span class="length-value">{{ form.length }} 字</span>
-                    <span>2000</span>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <div class="editor-actions">
-              <button class="generate-btn" :disabled="loading || !form.theme.trim() || !form.name.trim()" @click="handleSubmit">
-                <van-loading v-if="loading" size="18px" color="#fff" />
-                <template v-else>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                  生成视频
-                </template>
-              </button>
-            </div>
-          </aside>
+          </div>
         </div>
-      </main>
-    </div>
 
-    <div v-if="activeTab === 'library'" class="library-panel">
-      <div class="library-content">
-        <div class="library-header">
-          <h2 class="library-title">资产记录</h2>
-          <button class="create-btn" @click="activeTab = 'create'">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            创建新视频
+        <div v-else-if="configTab === 'voice'" class="tab-body">
+          <div class="section-head">
+            <label>配音音色</label>
+            <span>{{ form.voice_name || '未选择' }}</span>
+          </div>
+          <div class="voice-grid">
+            <button
+              v-for="voice in voiceOptions"
+              :key="voice.value"
+              type="button"
+              class="voice-card"
+              :class="{ active: form.voice_type === voice.value }"
+              @click="selectVoice(voice)"
+            >
+              <span class="voice-avatar">{{ voice.text.slice(0, 1) }}</span>
+              <span class="voice-text">{{ voice.text }}</span>
+            </button>
+          </div>
+
+          <div v-if="inputMode === 'theme'" class="range-block compact-length">
+            <div class="section-head">
+              <label>脚本字数</label>
+              <strong>{{ form.length === 0 ? '自动' : `${form.length} 字` }}</strong>
+            </div>
+            <input type="range" v-model.number="form.length" min="0" max="2000" step="50" class="slider" />
+          </div>
+
+          <div class="range-block">
+            <div class="section-head">
+              <label>语速调节</label>
+              <strong>{{ voiceSpeed.toFixed(1) }}x</strong>
+            </div>
+            <input type="range" v-model.number="voiceSpeed" min="0.8" max="1.4" step="0.1" class="slider" />
+          </div>
+        </div>
+
+        <div v-else-if="configTab === 'clone'" class="tab-body placeholder-body">
+          <div class="upload-placeholder">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <span>上传 10 秒以上清晰音频</span>
+          </div>
+          <div class="placeholder-list">
+            <div v-for="item in ['我的克隆音色 A', '我的克隆音色 B']" :key="item">{{ item }}<span>未接入</span></div>
+          </div>
+        </div>
+
+        <div v-else class="tab-body placeholder-body">
+          <textarea class="music-input" placeholder="描述想要的配乐氛围，例如：克制、科技、轻节奏"></textarea>
+          <div class="placeholder-list">
+            <div v-for="item in ['轻科技律动', '温暖钢琴', '纪录片氛围']" :key="item">{{ item }}<span>推荐</span></div>
+          </div>
+        </div>
+
+        <p v-if="!form.name.trim()" class="generate-hint">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          请先填写上方的「项目名称」
+        </p>
+        <button class="generate-btn" :disabled="loading || !canSubmit" @click="handleSubmit">
+          <el-icon v-if="loading" class="is-loading" style="margin-right: 8px;"><Loading /></el-icon>
+          <template v-else>
+            <span class="generate-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>
+            生成视频
+          </template>
+        </button>
+      </aside>
+    </main>
+
+    <main v-else class="library-page">
+      <div class="library-header">
+        <div>
+          <div class="eyebrow">Assets</div>
+          <h1>资产记录</h1>
+        </div>
+        <button class="dark-btn" @click="activeTab = 'create'">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          新建项目
+        </button>
+      </div>
+
+      <div v-loading="libraryLoading" element-loading-text="加载中..." class="task-grid">
+        <button type="button" class="new-task-card" @click="activeTab = 'create'">
+          <span>+</span>
+          <strong>新建项目</strong>
+        </button>
+        <div v-for="task in tasks" :key="task.task_id" class="task-card" @click="onTaskClick(task)">
+          <button type="button" class="task-delete" @click.stop="onDeleteTask(task)" aria-label="删除">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
           </button>
-        </div>
-
-        <van-loading v-if="libraryLoading" size="24px" vertical style="padding:60px 0;">加载中...</van-loading>
-
-        <div v-else-if="tasks.length === 0" class="empty-library">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-placeholder)" stroke-width="1.5">
-            <rect x="2" y="3" width="20" height="18" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="18" x2="12" y2="21"/>
-          </svg>
-          <p>暂无生成记录</p>
-          <button class="empty-btn" @click="activeTab = 'create'">创建第一个视频</button>
-        </div>
-
-        <div v-else class="task-grid">
-          <div v-for="task in tasks" :key="task.task_id" class="task-card" @click="onTaskClick(task)">
-            <div class="task-card-header">
-              <span class="task-name">{{ task.name || task.theme }}</span>
-              <span class="task-status" :class="'status-' + task.status">{{ statusLabel(task.status) }}</span>
-            </div>
-            <div class="task-theme">{{ task.theme }}</div>
+          <div class="task-cover">
+            <img :src="taskCover(task)" :alt="task.name || task.theme" />
+            <span class="task-status" :class="'status-' + task.status">{{ statusLabel(task.status) }}</span>
+          </div>
+          <div class="task-body">
+            <h3>{{ task.name || task.theme }}</h3>
+            <p>{{ task.theme }}</p>
             <div class="task-meta">
               <span v-if="task.segments_count">{{ task.segments_count }} 段</span>
               <span>{{ formatTimestamp(task.created_at) }}</span>
@@ -204,27 +302,82 @@
           </div>
         </div>
       </div>
-    </div>
 
-    <van-popup v-model:show="showVoicePicker" position="bottom" round>
-      <van-picker :columns="voiceOptions" @confirm="onVoiceConfirm" @cancel="showVoicePicker = false" />
+      <div v-if="!libraryLoading && tasks.length === 0" class="empty-library">
+        <p>暂无生成记录</p>
+      </div>
+    </main>
+
+    <van-popup v-model:show="showWritingAssistant" round class="assistant-popup">
+      <div class="popup-panel">
+        <h3>写作助手</h3>
+        <p>后续可接入主题扩写、口播润色和自动分镜建议。当前仅保留视觉占位，不调用后端接口。</p>
+        <button class="inline-primary" @click="showWritingAssistant = false">知道了</button>
+      </div>
     </van-popup>
+
+    <div v-if="showCustomVisualStyle" class="visual-style-overlay" @click.self="cancelCustomVisualStyle">
+      <section class="visual-style-dialog">
+        <div class="dialog-head">
+          <div>
+            <h2>添加画面风格</h2>
+          </div>
+          <button type="button" class="icon-btn" aria-label="关闭" @click="cancelCustomVisualStyle">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+
+        <div class="visual-style-form">
+          <label class="field-line">
+            <span>风格名称</span>
+            <input v-model.trim="customVisualForm.name" class="inline-input" placeholder="例如：赛博朋克" />
+          </label>
+
+          <label class="field-line">
+            <span>Prompt 后缀</span>
+            <textarea v-model.trim="customVisualForm.prompt" class="prompt-input" placeholder="英文 prompt 后缀，例如：cyberpunk, neon lights, futuristic city"></textarea>
+          </label>
+
+          <div class="visual-upload-grid">
+            <label class="upload-card">
+              <input type="file" accept="image/*" @change="onCustomVisualImageChange" />
+              <span class="upload-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              </span>
+              <strong>上传预览图</strong>
+              <small>建议使用正方形图片，自动裁切显示</small>
+            </label>
+            <div class="custom-preview large-preview">
+              <img v-if="customVisualForm.image" :src="customVisualForm.image" alt="自定义预览" />
+              <span v-else>预览</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="dialog-actions">
+          <button type="button" class="inline-secondary" @click="cancelCustomVisualStyle">取消</button>
+          <button type="button" class="inline-primary" @click="addCustomVisualStyle">上传</button>
+        </div>
+      </section>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Popup as VanPopup, Picker as VanPicker, Loading as VanLoading, showToast } from 'vant'
-import { createTask, getVoices, listTasks } from '../api/task'
+import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
+import { createTask, createTaskFromImages, deleteTask, getVoices, listTasks } from '../api/task'
 import { formatTimestamp } from '../utils/format'
+import NavBar from '../components/NavBar.vue'
 
 const router = useRouter()
 const route = useRoute()
 const activeTab = ref('create')
+const configTab = ref('visual')
 const form = ref({ name: '', theme: '', style: '温暖感人', length: 300, visual_style: '电影质感', voice_type: '', voice_name: '米仔' })
+const inputMode = ref('script')
 const loading = ref(false)
-const showVoicePicker = ref(false)
 const voiceOptions = ref([])
 const voiceMap = ref({})
 const tasks = ref([])
@@ -235,9 +388,40 @@ const customTextStyleName = ref('')
 const customVisualForm = ref({ name: '', prompt: '', image: '' })
 const customTextStyles = ref([])
 const customVisualStyles = ref([])
+const visualSource = ref('ai')
+const videoRatio = ref('16:9')
+const voiceSpeed = ref(1.0)
+const themeFocused = ref(false)
+const showWritingAssistant = ref(false)
+const uploadedImages = ref([])
+const uploadInput = ref(null)
+const dragImageIndex = ref(null)
 
 const TEXT_STYLE_STORAGE_KEY = 'kepu_custom_text_styles'
 const VISUAL_STYLE_STORAGE_KEY = 'kepu_custom_visual_styles'
+
+const configTabs = [
+  { key: 'visual', label: '画面' },
+  { key: 'voice', label: '配音' },
+  { key: 'clone', label: '声音克隆' },
+  { key: 'music', label: '音乐' },
+]
+const inputModes = [
+  { label: '写作模式', value: 'script' },
+  { label: '主题模式', value: 'theme' },
+]
+const videoRatios = ['16:9', '9:16', '1:1']
+const rotatorItems = [
+  { text: '一键生成视频', class: 'text-bloom', anim: 'anim-bloom' },
+  { text: '导出剪映草稿', class: 'text-push', anim: 'anim-push' },
+  { text: '自由二次编辑', class: 'text-breathe', anim: 'anim-breathe' },
+  { slot: true },
+  { finale: true },
+]
+const slotWords = ['视频', '图片', '音频']
+const rotatorDurations = [3200, 3000, 3500, 5000, 2600]
+const rotatorIndex = ref(0)
+let rotatorTimer = null
 
 const defaultStyleOptions = [
   { text: '温暖感人', value: '温暖感人' },
@@ -258,8 +442,16 @@ const defaultVisualStyleOptions = [
 
 const allStyleOptions = computed(() => [...defaultStyleOptions, ...customTextStyles.value])
 const allVisualStyleOptions = computed(() => [...defaultVisualStyleOptions, ...customVisualStyles.value])
+const currentRotatorItem = computed(() => rotatorItems[rotatorIndex.value] || rotatorItems[0])
+const themeMaxLength = computed(() => inputMode.value === 'theme' ? 100 : 2000)
+const canSubmit = computed(() => {
+  if (!form.value.name.trim()) return false
+  if (visualSource.value === 'upload') return uploadedImages.value.length > 0
+  return Boolean(form.value.theme.trim())
+})
 
 onMounted(async () => {
+  startRotator()
   loadCustomOptions()
   if (route.query.tab === 'library') {
     activeTab.value = 'library'
@@ -277,9 +469,34 @@ onMounted(async () => {
     }
   } catch (error) {
     console.error('加载音色列表失败:', error)
-    showToast('加载音色列表失败')
+    ElMessage.error('加载音色列表失败')
   }
 })
+
+onBeforeUnmount(() => {
+  clearTimeout(rotatorTimer)
+  uploadedImages.value.forEach(item => URL.revokeObjectURL(item.url))
+})
+
+function startRotator() {
+  clearTimeout(rotatorTimer)
+  rotatorTimer = setTimeout(() => {
+    rotatorIndex.value = (rotatorIndex.value + 1) % rotatorItems.length
+    startRotator()
+  }, rotatorDurations[rotatorIndex.value] || 3200)
+}
+
+function handleNavigate(tab) {
+  if (tab === 'settings') {
+    router.push('/settings')
+    return
+  }
+  if (tab === 'library') {
+    switchToLibrary()
+    return
+  }
+  activeTab.value = 'create'
+}
 
 function loadCustomOptions() {
   try {
@@ -303,12 +520,15 @@ function saveCustomVisualStyles() {
 function openCustomTextStyle() {
   customTextStyleName.value = ''
   showCustomTextStyle.value = true
+  nextTick(() => {
+    document.querySelector('.custom-inline')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  })
 }
 
 function addCustomTextStyle() {
   const name = customTextStyleName.value.trim()
-  if (!name) { showToast('请输入创作风格名称'); return }
-  if (allStyleOptions.value.some(opt => opt.value === name)) { showToast('该风格已存在'); return }
+  if (!name) { ElMessage.warning('请输入创作风格名称'); return }
+  if (allStyleOptions.value.some(opt => opt.value === name)) { ElMessage.warning('该风格已存在'); return }
   customTextStyles.value.push({ text: name, value: name, custom: true })
   saveCustomTextStyles()
   form.value.style = name
@@ -326,14 +546,14 @@ function openCustomVisualStyle() {
   showCustomVisualStyle.value = true
 }
 
+function cancelCustomVisualStyle() {
+  customVisualForm.value = { name: '', prompt: '', image: '' }
+  showCustomVisualStyle.value = false
+}
+
 function onCustomVisualImageChange(event) {
   const file = event.target.files?.[0]
   if (!file) return
-  if (file.size > 800 * 1024) {
-    showToast('预览图请控制在 800KB 内')
-    event.target.value = ''
-    return
-  }
   const reader = new FileReader()
   reader.onload = () => { customVisualForm.value.image = reader.result }
   reader.readAsDataURL(file)
@@ -342,9 +562,9 @@ function onCustomVisualImageChange(event) {
 function addCustomVisualStyle() {
   const name = customVisualForm.value.name.trim()
   const prompt = customVisualForm.value.prompt.trim()
-  if (!name) { showToast('请输入画面风格名称'); return }
-  if (!prompt) { showToast('请输入英文 prompt 后缀'); return }
-  if (allVisualStyleOptions.value.some(opt => opt.text === name)) { showToast('该画面风格已存在'); return }
+  if (!name) { ElMessage.warning('请输入画面风格名称'); return }
+  if (!prompt) { ElMessage.warning('请输入英文 prompt 后缀'); return }
+  if (allVisualStyleOptions.value.some(opt => opt.text === name)) { ElMessage.warning('该画面风格已存在'); return }
 
   const value = `custom-${Date.now()}`
   customVisualStyles.value.push({
@@ -356,6 +576,7 @@ function addCustomVisualStyle() {
   })
   saveCustomVisualStyles()
   form.value.visual_style = value
+  customVisualForm.value = { name: '', prompt: '', image: '' }
   showCustomVisualStyle.value = false
 }
 
@@ -365,37 +586,118 @@ function removeCustomVisualStyle(value) {
   if (form.value.visual_style === value) form.value.visual_style = defaultVisualStyleOptions[0].value
 }
 
-const onVoiceConfirm = ({ selectedOptions }) => {
-  form.value.voice_type = selectedOptions[0].value
-  form.value.voice_name = voiceMap.value[selectedOptions[0].value]
-  showVoicePicker.value = false
+function selectVoice(voice) {
+  form.value.voice_type = voice.value
+  form.value.voice_name = voiceMap.value[voice.value] || voice.text
 }
 
-const handleSubmit = async () => {
-  if (!form.value.name.trim()) { showToast('请输入项目名称'); return }
-  if (!form.value.theme.trim()) { showToast('请输入视频主题'); return }
+function switchInputMode(mode) {
+  inputMode.value = mode
+  if (mode === 'theme' && form.value.theme.length > 100) {
+    form.value.theme = form.value.theme.slice(0, 100)
+    ElMessage.warning('主题模式最多输入 100 字，已自动截断')
+  }
+}
 
+function normalizeLength() {
+  const value = Number(form.value.length)
+  if (Number.isNaN(value)) {
+    form.value.length = 300
+    return
+  }
+  form.value.length = Math.min(2000, Math.max(0, Math.round(value / 50) * 50))
+}
+
+function buildStylePayload() {
   const selectedVisual = allVisualStyleOptions.value.find(opt => opt.value === form.value.visual_style) || defaultVisualStyleOptions[0]
   const visualStyleName = selectedVisual.text || selectedVisual.value
   const visualPromptSuffix = selectedVisual.prompt || ''
-  const stylePayload = visualPromptSuffix
+  return visualPromptSuffix
     ? `${form.value.style}|${visualStyleName}|${visualPromptSuffix}`
     : `${form.value.style}|${visualStyleName}`
+}
+
+function onUploadImagesSelected(event) {
+  const files = Array.from(event.target.files || [])
+  if (files.length > 0) appendUploadedFiles(files)
+  event.target.value = ''
+}
+
+function appendUploadedFiles(files) {
+  const imageFiles = files.filter(file => file.type?.startsWith('image/'))
+  if (imageFiles.length !== files.length) ElMessage.warning('已忽略非图片文件')
+
+  const remaining = 20 - uploadedImages.value.length
+  if (remaining <= 0) {
+    ElMessage.warning('最多上传 20 张图片')
+    return
+  }
+  if (imageFiles.length > remaining) ElMessage.warning('最多上传 20 张图片，已自动截断')
+
+  const nextItems = imageFiles.slice(0, remaining).map(file => ({
+    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    file,
+    url: URL.createObjectURL(file),
+  }))
+  uploadedImages.value.push(...nextItems)
+}
+
+function removeUploadedImage(index) {
+  const [removed] = uploadedImages.value.splice(index, 1)
+  if (removed?.url) URL.revokeObjectURL(removed.url)
+}
+
+function onUploadImageDragStart(index) {
+  dragImageIndex.value = index
+}
+
+function onUploadImageDrop(targetIndex) {
+  const sourceIndex = dragImageIndex.value
+  dragImageIndex.value = null
+  if (sourceIndex === null || sourceIndex === targetIndex) return
+  const [moved] = uploadedImages.value.splice(sourceIndex, 1)
+  uploadedImages.value.splice(targetIndex, 0, moved)
+}
+
+const handleSubmit = async () => {
+  if (!form.value.name.trim()) { ElMessage.warning('请输入项目名称'); return }
+  if (visualSource.value === 'upload' && uploadedImages.value.length === 0) { ElMessage.warning('请先上传图片'); return }
+  if (visualSource.value !== 'upload' && !form.value.theme.trim()) { ElMessage.warning(inputMode.value === 'theme' ? '请输入视频主题' : '请输入文案内容'); return }
+  if (inputMode.value === 'theme' && form.value.theme.trim().length > 100) { ElMessage.warning('主题模式最多输入 100 字'); return }
+  normalizeLength()
+
+  const stylePayload = buildStylePayload()
 
   loading.value = true
   try {
+    if (visualSource.value === 'upload') {
+      const formData = new FormData()
+      uploadedImages.value.forEach(item => formData.append('images', item.file))
+      formData.append('style', stylePayload)
+      formData.append('ratio', videoRatio.value)
+      formData.append('voice_type', form.value.voice_type || '')
+      formData.append('name', form.value.name.trim())
+
+      const response = await createTaskFromImages(formData)
+      ElMessage.success('已创建分镜')
+      await router.push(`/preview/${response.task_id}`)
+      return
+    }
+
     const response = await createTask({
       name: form.value.name.trim(),
       theme: form.value.theme.trim(),
+      input_mode: inputMode.value,
       style: stylePayload,
+      ratio: videoRatio.value,
       length: form.value.length,
       voice_type: form.value.voice_type || undefined,
     })
-    showToast({ message: '任务创建成功', duration: 1500 })
+    ElMessage.success('任务创建成功')
     setTimeout(() => { router.push(`/process/${response.task_id}`) }, 1500)
   } catch (error) {
     console.error('创建任务失败:', error)
-    showToast('创建任务失败，请重试')
+    ElMessage.error('创建任务失败，请重试')
   } finally {
     loading.value = false
   }
@@ -412,7 +714,7 @@ async function loadTasks() {
     tasks.value = await listTasks(null, 50, 0)
   } catch (error) {
     console.error('加载资产列表失败:', error)
-    showToast('加载资产列表失败')
+    ElMessage.error('加载资产列表失败')
   } finally {
     libraryLoading.value = false
   }
@@ -423,312 +725,1579 @@ function statusLabel(status) {
   return map[status] || status
 }
 
+function taskCover(task) {
+  const styleName = (task.style || '').split('|')[1] || '电影质感'
+  return defaultVisualStyleOptions.find(item => item.text === styleName)?.image || defaultVisualStyleOptions[0].image
+}
+
 function onTaskClick(task) {
-  if (task.status === 'completed') router.push(`/result/${task.task_id}`)
+  if (task.status === 'completed') router.push(`/preview/${task.task_id}`)
   else if (task.status === 'processing' || task.status === 'pending') router.push(`/process/${task.task_id}`)
-  else showToast('该任务已失败，请创建新任务')
+  else ElMessage.warning('该任务已失败，请创建新任务')
+}
+
+async function onDeleteTask(task) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除「${task.name || task.theme}」吗？此操作不可恢复。`,
+      '删除任务',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+      }
+    )
+  } catch {
+    return
+  }
+  try {
+    await deleteTask(task.task_id)
+    tasks.value = tasks.value.filter(t => t.task_id !== task.task_id)
+    ElMessage.success('已删除')
+  } catch (error) {
+    console.error('删除任务失败:', error)
+    ElMessage.error('删除失败，请重试')
+  }
 }
 </script>
 
 <style scoped>
-.create-view { height: 100vh; background: var(--color-bg); display: flex; flex-direction: column; overflow: hidden; }
-.top-nav {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0 24px; height: 52px; background: var(--color-card);
-  border-bottom: 1px solid var(--color-border); flex-shrink: 0;
-  position: relative; z-index: 10;
+.create-view {
+  height: 100vh;
+  background: var(--color-bg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
-.nav-left { display: flex; align-items: center; gap: 10px; }
-.nav-logo {
-  width: 32px; height: 32px; background: var(--color-primary); color: #fff;
-  border-radius: 8px; display: flex; align-items: center; justify-content: center;
-}
-.nav-brand { font-size: 15px; font-weight: 700; color: var(--color-text); }
-.nav-tabs { display: flex; gap: 4px; }
-.nav-tab {
-  display: flex; align-items: center; gap: 6px; padding: 7px 16px;
-  border-radius: 6px; font-size: 13px; font-weight: 500;
-  color: var(--color-text-tertiary); background: none; border: none;
-  cursor: pointer; transition: all 0.15s;
-}
-.nav-tab:hover { color: var(--color-text-secondary); background: var(--color-bg-secondary); }
-.nav-tab.active { color: var(--color-primary); background: var(--color-primary-bg); font-weight: 600; }
-.nav-right { width: 120px; }
 
-.create-layout { flex: 1; min-height: 0; overflow: hidden; padding: 18px 24px 22px; }
-.workspace-panel {
-  height: 100%;
-  width: min(1280px, 100%);
-  margin: 0 auto;
+.create-page {
+  height: calc(100vh - 64px);
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 12px;
+  padding: 12px 16px;
+  overflow: hidden;
 }
-.workspace-header {
-  min-height: 54px;
-  display: grid;
-  grid-template-columns: minmax(220px, 1fr) auto auto;
-  align-items: center;
-  gap: 14px;
-  padding: 10px 14px;
+
+.editor-panel,
+.config-panel {
+  min-height: 0;
   background: var(--color-card);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-xs);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
 }
-.hero-kicker {
+
+.editor-panel {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 16px;
+  padding: 20px 32px 20px 56px;
+  overflow: hidden;
+}
+
+.editor-panel .panel-head {
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) minmax(260px, 1.15fr) minmax(250px, 1fr) minmax(112px, auto);
+  align-items: end;
+  gap: 16px;
+}
+
+.config-panel {
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  overflow: hidden;
+}
+
+.panel-head,
+.library-header,
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.panel-title-copy {
+  min-width: 0;
+}
+
+.editor-panel .title-field {
+  height: 40px;
+  width: 100%;
+  max-width: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-secondary);
+  justify-self: stretch;
+  transition: border-color 0.16s, box-shadow 0.16s, background 0.16s;
+}
+
+.editor-panel .mode-field {
+  height: 40px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 8px 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-secondary);
+  justify-self: stretch;
+}
+
+.editor-panel .title-field:focus-within {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+  background: #fff;
+}
+
+.editor-panel .title-field label,
+.editor-panel .mode-field label {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.editor-panel .ghost-btn {
+  justify-self: end;
+  min-width: 112px;
+}
+
+.eyebrow {
   font-size: 11px;
+  line-height: 1;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--color-primary);
   font-weight: 800;
-  margin-bottom: 3px;
+  margin-bottom: 7px;
 }
-.workspace-header h1 { font-size: 20px; line-height: 1.15; color: var(--color-text); }
-.workflow-strip { display: flex; gap: 6px; align-items: center; }
-.workflow-strip span {
-  height: 26px;
-  padding: 0 10px;
+
+h1 {
+  font-size: 24px;
+  line-height: 1.15;
+  color: var(--color-text);
+}
+
+label,
+.section-head label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+}
+
+.section-head span,
+.assistant-row span {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.text-link {
+  height: 28px;
   display: inline-flex;
   align-items: center;
-  border-radius: 6px;
-  background: var(--color-bg-secondary);
-  color: var(--color-text-secondary);
+  justify-content: center;
+  gap: 5px;
+  padding: 0 10px;
+  border-radius: 7px;
+  border: 1px solid var(--color-border);
+  background: #fff;
+  color: var(--color-primary);
   font-size: 12px;
   font-weight: 700;
+  cursor: pointer;
+  box-shadow: var(--shadow-xs);
+  transition: border-color 0.16s, background 0.16s, transform 0.16s, box-shadow 0.16s;
 }
-.workspace-grid {
-  min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1.18fr) minmax(360px, 0.82fr);
-  gap: 14px;
+
+.text-link svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 2.4;
 }
-.form-card {
-  min-height: 0;
+
+.text-link:hover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-bg);
+  box-shadow: 0 2px 8px rgba(22, 93, 255, 0.12);
+  transform: translateY(-1px);
+}
+
+.text-link:active {
+  transform: translateY(0);
+}
+
+.ghost-btn,
+.dark-btn,
+.assistant-btn,
+.icon-btn {
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 14px;
+  border-radius: 7px;
+  border: 1px solid var(--color-border);
   background: var(--color-card);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ghost-btn svg,
+.dark-btn svg,
+.assistant-btn svg,
+.icon-btn svg,
+.upload-icon svg,
+.generate-icon svg,
+.upload-placeholder svg {
+  width: 16px;
+  height: 16px;
+}
+
+.icon-btn {
+  width: 36px;
+  padding: 0;
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-secondary);
+}
+
+.icon-btn:hover {
+  color: var(--color-text);
+  border-color: var(--color-primary);
+}
+
+.dark-btn,
+.generate-btn {
+  background: var(--color-dark);
+  border-color: var(--color-dark);
+  color: #fff;
+}
+
+.title-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.name-input,
+.inline-input,
+.prompt-input,
+.music-input {
+  width: 100%;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-xs);
-  padding: 14px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  outline: none;
+  transition: border-color 0.16s, box-shadow 0.16s, background 0.16s;
 }
-.primary-card { display: grid; grid-template-rows: auto auto minmax(210px, 1fr) auto auto auto; gap: 10px; }
-.config-card { display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
-.config-block { min-width: 0; }
-.config-card .config-block:first-child {
-  flex: 1;
+
+.name-input,
+.inline-input {
+  height: 40px;
+  padding: 0 12px;
+  font-size: 14px;
+}
+
+.name-input {
+  text-align: center;
+}
+
+.editor-panel .name-input {
+  height: 100%;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  text-align: center;
+}
+
+.editor-panel .name-input:focus {
+  border-color: transparent;
+  box-shadow: none;
+  background: transparent;
+}
+
+.name-input:focus,
+.inline-input:focus,
+.prompt-input:focus,
+.theme-textarea:focus,
+.music-input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+  background: #fff;
+}
+
+.script-field {
   min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mode-switch {
+  width: fit-content;
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.mode-switch button {
+  height: 28px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.mode-switch button.active {
+  background: var(--color-dark);
+  color: #fff;
+  box-shadow: var(--shadow-xs);
+}
+
+.mode-switch button:not(.active) {
+  color: var(--color-text);
+}
+
+.textarea-shell {
+  flex: 1;
+  min-height: 340px;
+  position: relative;
+}
+
+.theme-textarea {
+  width: 100%;
+  height: 100%;
+  min-height: 340px;
+  padding: 16px;
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  resize: none;
+  outline: none;
+  background: var(--color-bg-secondary);
+}
+
+.textarea-shell:not(:focus-within) .theme-textarea::placeholder {
+  color: transparent;
+}
+
+.value-rotator {
+  position: absolute;
+  inset: 0;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.rotator-placeholder {
+  position: absolute;
+  top: 22px;
+  left: 22px;
+  color: var(--color-text-tertiary);
+  font-size: 15px;
+  opacity: 0.45;
+  font-weight: 300;
+}
+
+.rotator-stage {
+  position: relative;
+  width: 100%;
+  height: 112px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 30%, #000 70%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 30%, #000 70%, transparent 100%);
+}
+
+.rotator-text {
+  position: absolute;
+  font-size: 32px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.anim-bloom {
+  animation: bloomIn 1.2s cubic-bezier(0.4, 0, 0.2, 1) forwards, bloomOut 0.5s cubic-bezier(0.4, 0, 0.2, 1) 2.7s forwards;
+}
+
+@keyframes bloomIn {
+  from { transform: scale(0.8); opacity: 0; filter: blur(20px); letter-spacing: 0; }
+  to { transform: scale(1); opacity: 1; filter: blur(0); letter-spacing: 0.05em; }
+}
+
+@keyframes bloomOut {
+  to { transform: translateX(-150px); opacity: 0; filter: blur(10px); }
+}
+
+.text-bloom {
+  background: linear-gradient(to right, var(--color-text), var(--color-primary), #f472b6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.anim-push {
+  animation: pushIn 0.8s cubic-bezier(0.33, 1, 0.68, 1) forwards, pushOut 0.6s cubic-bezier(0.4, 0, 0.2, 1) 2.4s forwards;
+}
+
+@keyframes pushIn {
+  from { transform: translateX(200px); opacity: 0; filter: blur(10px); }
+  to { transform: translateX(0); opacity: 1; filter: blur(0); }
+}
+
+@keyframes pushOut {
+  to { transform: translateY(60px) scale(0.9); opacity: 0; filter: blur(15px); }
+}
+
+.text-push {
+  background: linear-gradient(to bottom right, var(--color-text), var(--color-primary), #f472b6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.anim-breathe {
+  animation: breatheIn 2.2s ease-out forwards, breatheOut 0.8s ease-out 2.2s forwards;
+}
+
+@keyframes breatheIn {
+  from { transform: translateY(-60px) scale(0.9); opacity: 0; }
+  to { transform: translateY(0) scale(1.05); opacity: 1; }
+}
+
+@keyframes breatheOut {
+  to { transform: translateY(-60px) scale(0.9); opacity: 0; filter: blur(10px); }
+}
+
+.text-breathe {
+  background: linear-gradient(to right, var(--color-primary), #f472b6, var(--color-primary));
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: shimmer 3s linear infinite, breatheIn 2.2s ease-out forwards, breatheOut 0.8s ease-out 2.2s forwards;
+}
+
+@keyframes shimmer {
+  to { background-position: 200% center; }
+}
+
+.anim-slot {
+  animation: slotIn 0.6s cubic-bezier(0.4, 0, 0.2, 1) forwards, slotOut 0.8s cubic-bezier(0.4, 0, 0.2, 1) 2.5s forwards;
+}
+
+@keyframes slotIn {
+  from { transform: translateY(30px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes slotOut {
+  to { transform: scale(0.1); opacity: 0; filter: blur(20px); }
+}
+
+.slot-group {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.slot-item {
+  height: 40px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.06);
+}
+
+.slot-word {
+  opacity: 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--color-text);
+  animation: wordSlideUp 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@keyframes wordSlideUp {
+  from { transform: translateY(40px); filter: blur(10px); opacity: 0; }
+  to { transform: translateY(0); filter: blur(0); opacity: 1; }
+}
+
+.anim-finale {
+  animation: finaleIn 1.5s cubic-bezier(0.4, 0, 0.2, 1) forwards, finaleOut 0.6s cubic-bezier(0.4, 0, 0.2, 1) 2.5s forwards;
+}
+
+@keyframes finaleIn {
+  from { transform: scale(0.1); opacity: 0; filter: blur(20px); }
+  to { transform: scale(1); opacity: 1; filter: blur(0); }
+}
+
+@keyframes finaleOut {
+  to { transform: scale(1.2); opacity: 0; filter: blur(10px); }
+}
+
+.text-finale {
+  color: var(--color-text);
+}
+
+.text-finale span {
+  color: var(--color-primary);
+}
+
+.style-section {
+  flex-shrink: 0;
+  margin-top: 14px;
+}
+
+.chip-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.chip {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  background: #fff;
+  border: 1px solid var(--color-border);
+  cursor: pointer;
+}
+
+.chip:hover,
+.chip.active {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+  background: var(--color-primary-bg);
+}
+
+.add-chip {
+  border-style: dashed;
+}
+
+.chip-remove,
+.style-remove {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(29, 33, 41, 0.08);
+}
+
+.custom-inline {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.inline-primary,
+.inline-secondary {
+  height: 36px;
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  border: none;
+}
+
+.inline-primary { background: var(--color-primary); color: #fff; }
+.inline-secondary { background: #fff; color: var(--color-text-secondary); border: 1px solid var(--color-border); }
+
+.assistant-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.assistant-btn {
+  background: var(--color-bg-secondary);
+  color: var(--color-primary);
+}
+
+.config-tabs {
+  display: flex;
+  gap: 16px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.config-tabs button {
+  font-size: 13px;
+  font-weight: 500;
+  padding-bottom: 4px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+}
+
+.config-tabs button.active {
+  color: var(--color-text);
+  border-bottom-color: var(--color-primary);
+}
+
+.config-tabs button:hover {
+  color: var(--color-text);
+}
+
+.toggle-line button,
+.ratio-options button {
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.toggle-line button.active,
+.ratio-options button.active {
+  background: #fff;
+  color: var(--color-primary);
+  box-shadow: var(--shadow-xs);
+}
+
+.tab-body {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.toggle-line,
+.ratio-options {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  padding: 4px;
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-sm);
+  margin-bottom: 14px;
+}
+
+.toggle-line button,
+.ratio-options button {
+  height: 30px;
+}
+
+.style-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 10px 0 14px;
+}
+
+.style-card {
+  aspect-ratio: 1 / 1;
+  position: relative;
+  overflow: hidden;
+  border-radius: 6px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 6px;
+  background: var(--color-bg-secondary);
+  transition: all 0.3s;
+}
+
+.style-card:hover {
+  border-color: var(--color-border);
+}
+
+.style-card:hover .style-card-img,
+.style-card:hover img {
+  transform: scale(1.1);
+}
+
+.style-card.active {
+  border-color: var(--color-primary);
+}
+
+.style-card img,
+.custom-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  position: absolute;
+  inset: 0;
+  transition: transform 0.5s;
+}
+
+.style-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, rgba(0,0,0,0.6), transparent);
+}
+
+.style-name {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  z-index: 1;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.5);
+}
+
+.style-remove {
+  position: absolute;
+  z-index: 2;
+  right: 8px;
+  top: 8px;
+  background: rgba(255,255,255,0.88);
+  color: var(--color-text);
+}
+
+.custom-style-bg,
+.add-style {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-primary);
+  font-weight: 800;
+}
+
+.add-style {
+  flex-direction: column;
+  gap: 4px;
+  border: 1px dashed var(--color-border);
+}
+
+.add-style::after {
+  display: none;
+}
+
+.add-style span {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.add-style strong {
+  position: relative;
+  z-index: 1;
+  font-size: 12px;
+}
+
+.upload-image-block {
+  margin-bottom: 14px;
+}
+
+.upload-image-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.upload-image-card,
+.upload-image-add {
+  aspect-ratio: 1 / 1;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+  background: var(--color-bg-secondary);
+}
+
+.upload-image-card {
+  position: relative;
+  cursor: grab;
+}
+
+.upload-image-card:active {
+  cursor: grabbing;
+}
+
+.upload-image-card img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.upload-image-order {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  min-width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(0,0,0,0.58);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.upload-image-remove {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(0,0,0,0.62);
+  color: #fff;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.16s;
+}
+
+.upload-image-card:hover .upload-image-remove {
+  opacity: 1;
+}
+
+.upload-image-add {
+  display: grid;
+  place-items: center;
+  border-style: dashed;
+  color: var(--color-primary);
+  cursor: pointer;
+}
+
+.upload-image-add span {
+  font-size: 28px;
+  line-height: 1;
+  font-weight: 700;
+}
+
+.upload-image-add:hover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-bg);
+}
+
+.upload-hint {
+  margin-top: 8px;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.hidden-input {
+  display: none;
+}
+
+.custom-visual-panel {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-secondary);
+  margin-bottom: 14px;
+}
+
+.prompt-input,
+.music-input {
+  min-height: 72px;
+  padding: 10px 12px;
+  resize: vertical;
+  font-size: 13px;
+}
+
+.upload-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.upload-line input {
+  min-width: 0;
+  font-size: 12px;
+}
+
+.custom-preview {
+  position: relative;
+  height: 82px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: #fff;
+  border: 1px dashed var(--color-border);
+  color: var(--color-text-placeholder);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.custom-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.script-length-block {
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-card);
+}
+
+.length-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 86px;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.length-input {
+  width: 86px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  font-size: 13px;
+  outline: none;
+}
+
+.ratio-block,
+.range-block {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.compact-length {
+  margin-top: 0;
+}
+
+.ratio-options {
+  grid-template-columns: repeat(3, 1fr);
+  margin-bottom: 0;
+}
+
+.voice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+
+.voice-card {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: #fff;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.2s;
+}
+
+.voice-card:hover {
+  border-color: var(--color-primary);
+  background: var(--color-bg-secondary);
+}
+
+.voice-card.active {
+  border-color: var(--color-primary);
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
+}
+
+.voice-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: var(--color-dark);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.voice-text {
+  font-size: 13px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slider {
+  width: 100%;
+  height: 4px;
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--color-border);
+  border-radius: 999px;
+  outline: none;
+}
+
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  background: var(--color-primary);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.placeholder-body {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.upload-placeholder {
+  height: 118px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-secondary);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+}
+
+.upload-placeholder svg {
+  width: 24px;
+  height: 24px;
+}
+
+.placeholder-list {
+  display: grid;
+  gap: 8px;
+}
+
+.placeholder-list div {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+}
+
+.placeholder-list span {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.generate-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--color-danger, #ee0a24);
+  line-height: 1;
+  animation: hintPulse 2s ease-in-out infinite;
+}
+
+.generate-hint svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+@keyframes hintPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.generate-btn {
+  height: 40px;
+  width: 100%;
+  flex-shrink: 0;
+  margin-top: 0;
+  border-radius: 8px;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s, opacity 0.2s;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  padding: 0 16px;
+}
+
+.generate-btn:hover:not(:disabled) {
+  background: #333;
+}
+
+.generate-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.generate-icon {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: linear-gradient(to top right, #60a5fa, #a78bfa);
+}
+
+.generate-icon svg {
+  width: 10px;
+  height: 10px;
+}
+
+.library-page {
+  height: calc(100vh - 64px);
+  overflow-y: auto;
+  padding: 26px 32px 40px;
+}
+
+.library-header {
+  margin-bottom: 20px;
+}
+
+.task-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.new-task-card,
+.task-card {
+  position: relative;
+  min-height: 224px;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+  cursor: pointer;
+  transition: all 0.2s;
   display: flex;
   flex-direction: column;
 }
-.compact-head { margin-bottom: 8px; }
-.style-head { margin-top: 4px; margin-bottom: 8px; }
-.hint-text { font-size: 12px; color: var(--color-text-placeholder); font-weight: 600; }
-.settings-link, .text-link {
-  border: none; background: transparent; color: var(--color-primary);
-  font-size: 13px; font-weight: 600; cursor: pointer;
-}
-.settings-link {
-  height: 32px; padding: 0 12px; border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm); background: var(--color-card);
-}
-.form-section { margin-bottom: 18px; }
-.section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-.editor-label {
-  display: block; font-size: 13px; font-weight: 600;
-  color: var(--color-text-tertiary); margin-bottom: 8px;
-}
-.section-head .editor-label { margin-bottom: 0; }
-.name-input, .inline-input {
-  width: 100%; height: 40px; padding: 0 12px; font-size: 14px;
-  color: var(--color-text); border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm); background: var(--color-card);
-  outline: none; font-family: inherit; transition: border-color 0.15s, box-shadow 0.15s;
-}
-.name-input:focus, .inline-input:focus, .prompt-input:focus {
-  border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-bg);
-}
-.theme-area {
-  position: relative; background: var(--color-card); border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border); transition: border-color 0.15s, box-shadow 0.15s;
-}
-.primary-card .theme-area { min-height: 0; }
-.theme-area:focus-within { border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-bg); }
-.theme-textarea {
-  width: 100%; height: 100%; padding: 14px 16px 28px; font-size: 15px; line-height: 1.65;
-  color: var(--color-text); border: none; background: transparent;
-  border-radius: var(--radius-sm); resize: none; outline: none; font-family: inherit;
-  min-height: 220px;
-}
-.char-count { position: absolute; bottom: 8px; right: 14px; font-size: 11px; color: var(--color-text-placeholder); }
-.chip-group { display: flex; flex-wrap: wrap; gap: 8px; }
-.chip {
-  height: 30px; display: inline-flex; align-items: center; gap: 6px;
-  padding: 0 10px; border-radius: 6px; font-size: 13px;
-  color: var(--color-text-secondary); background: var(--color-card);
-  border: 1px solid var(--color-border); cursor: pointer; transition: all 0.15s;
-}
-.chip:hover { border-color: var(--color-primary); color: var(--color-primary); }
-.chip.active { color: var(--color-primary); background: var(--color-primary-bg); border-color: var(--color-primary); font-weight: 600; }
-.add-chip { border-style: dashed; }
-.chip-remove, .style-remove {
-  width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
-  background: rgba(0,0,0,0.08); color: currentColor; font-size: 14px; line-height: 1;
-}
-.custom-inline { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; margin-top: 8px; }
-.inline-primary, .inline-secondary {
-  height: 36px; padding: 0 12px; border-radius: var(--radius-sm); border: none;
-  font-size: 13px; font-weight: 600; cursor: pointer;
-}
-.inline-primary { background: var(--color-primary); color: #fff; }
-.inline-secondary { background: var(--color-card); color: var(--color-text-secondary); border: 1px solid var(--color-border); }
 
-.style-grid {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  grid-template-rows: repeat(3, minmax(92px, 1fr));
-  grid-auto-rows: minmax(92px, 1fr);
+.task-delete {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 5;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.16s, background 0.16s;
+}
+
+.task-card:hover .task-delete {
+  opacity: 1;
+}
+
+.task-delete:hover {
+  background: var(--color-danger, #ee0a24);
+}
+
+.task-delete svg {
+  width: 14px;
+  height: 14px;
+}
+
+.new-task-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   gap: 10px;
+  color: var(--color-text-tertiary);
+  border: 2px dashed var(--color-border);
+  min-height: 240px;
+  background: transparent;
+  box-shadow: none;
 }
-.style-card {
-  position: relative; min-height: 92px; border-radius: 7px; overflow: hidden;
-  cursor: pointer; border: 2px solid transparent; background: var(--color-card);
-  padding: 0; transition: border-color 0.15s, box-shadow 0.15s;
-}
-.style-card:hover { box-shadow: var(--shadow-md); }
-.style-card.active { border-color: var(--color-primary); box-shadow: 0 0 0 2px var(--color-primary-bg); }
-.style-img, .custom-preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.style-placeholder, .add-style-card {
-  background: #dfe7ec; color: var(--color-primary); display: flex;
-  align-items: center; justify-content: center; font-size: 22px; font-weight: 800;
-}
-.style-name {
-  position: absolute; bottom: 0; left: 0; right: 0; padding: 16px 4px 6px;
-  text-align: center; font-size: 11px; font-weight: 700; color: #fff;
-  background: linear-gradient(transparent, rgba(0,0,0,0.7));
-}
-.style-remove { position: absolute; top: 6px; right: 6px; background: rgba(255,255,255,0.86); color: var(--color-text); }
-.add-style-icon { font-size: 30px; font-weight: 300; color: var(--color-primary); }
-.custom-visual-panel {
-  display: grid; grid-template-columns: minmax(0, 1fr) 92px; gap: 8px;
-  margin-top: 8px; padding: 10px; border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm); background: var(--color-card);
-}
-.custom-fields { display: grid; gap: 8px; }
-.prompt-input {
-  width: 100%; min-height: 58px; padding: 8px 10px; resize: vertical;
-  border: 1px solid var(--color-border); border-radius: var(--radius-sm);
-  font-family: inherit; font-size: 13px; outline: none;
-}
-.upload-line { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--color-text-tertiary); }
-.upload-line input { font-size: 12px; max-width: 220px; }
-.custom-preview {
-  height: 100px; border-radius: var(--radius-sm); background: var(--color-bg-secondary);
-  color: var(--color-text-placeholder); display: flex; align-items: center; justify-content: center; overflow: hidden;
-}
-.custom-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; }
 
-.control-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: end; }
-.voice-picker {
-  width: 100%; height: 40px; display: flex; align-items: center; justify-content: space-between;
-  padding: 0 14px; border: 1px solid var(--color-border); border-radius: var(--radius-sm);
-  background: var(--color-card); cursor: pointer; transition: border-color 0.15s;
+.new-task-card:hover {
+  border-color: var(--color-primary);
+  background: var(--color-bg-secondary);
 }
-.voice-picker:hover { border-color: var(--color-primary); }
-.voice-name { font-size: 13px; color: var(--color-text-secondary); }
-.length-control {
-  height: 40px; background: var(--color-card); border-radius: var(--radius-sm);
-  padding: 9px 14px 6px; border: 1px solid var(--color-border);
-}
-.length-slider {
-  width: 100%; height: 4px; appearance: none; -webkit-appearance: none;
-  background: var(--color-border); border-radius: 2px; outline: none; display: block;
-}
-.length-slider::-webkit-slider-thumb {
-  -webkit-appearance: none; width: 16px; height: 16px; background: var(--color-primary);
-  border-radius: 50%; cursor: pointer;
-}
-.length-labels { display: flex; justify-content: space-between; align-items: center; margin-top: 3px; font-size: 11px; color: var(--color-text-placeholder); }
-.length-value { font-size: 12px; font-weight: 700; color: var(--color-primary); }
-.editor-actions { margin-top: auto; display: flex; justify-content: flex-end; }
-.generate-btn {
-  width: 100%; height: 44px; display: flex; align-items: center; justify-content: center; gap: 8px;
-  padding: 0 28px; border-radius: var(--radius-sm); background: var(--color-primary); color: #fff;
-  font-size: 14px; font-weight: 700; border: none; cursor: pointer; transition: background 0.15s, transform 0.1s;
-}
-.generate-btn:hover:not(:disabled) { background: var(--color-primary-hover); }
-.generate-btn:active:not(:disabled) { transform: scale(0.98); }
-.generate-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
-.library-panel { flex: 1; padding: 32px 40px; overflow-y: auto; }
-.library-content { max-width: 960px; margin: 0 auto; }
-.library-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 28px; }
-.library-title { font-size: 20px; font-weight: 700; color: var(--color-text); }
-.create-btn {
-  display: flex; align-items: center; gap: 6px; padding: 8px 16px;
-  border-radius: var(--radius-sm); background: var(--color-primary); color: #fff;
-  font-size: 13px; font-weight: 500; border: none; cursor: pointer;
+.new-task-card span {
+  font-size: 28px;
+  line-height: 1;
 }
-.empty-library { text-align: center; padding: 80px 0; color: var(--color-text-placeholder); }
-.empty-library svg { margin-bottom: 16px; }
-.empty-library p { font-size: 14px; margin-bottom: 20px; }
-.empty-btn {
-  padding: 8px 20px; border-radius: var(--radius-sm); border: 1px solid var(--color-border);
-  background: var(--color-card); color: var(--color-text-secondary); font-size: 13px; cursor: pointer;
-}
-.task-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
-.task-card {
-  background: var(--color-card); border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm); padding: 16px 18px; cursor: pointer;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-.task-card:hover { border-color: var(--color-primary); box-shadow: var(--shadow-sm); }
-.task-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-.task-name {
-  font-size: 14px; font-weight: 600; color: var(--color-text);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; margin-right: 8px;
-}
-.task-status { font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 600; flex-shrink: 0; }
-.status-pending { color: var(--color-text-tertiary); background: var(--color-bg-secondary); }
-.status-processing { color: var(--color-primary); background: var(--color-primary-bg); }
-.status-completed { color: var(--color-success); background: var(--color-success-bg); }
-.status-failed { color: var(--color-danger); background: var(--color-danger-bg); }
-.task-theme {
-  font-size: 13px; color: var(--color-text-tertiary); margin-bottom: 10px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.task-meta { display: flex; gap: 12px; font-size: 12px; color: var(--color-text-placeholder); }
 
-@media (max-width: 980px) {
-  .create-layout { overflow-y: auto; padding: 16px; }
-  .workspace-panel { height: auto; min-height: 100%; }
-  .workspace-header { grid-template-columns: 1fr auto; }
-  .workflow-strip { grid-column: 1 / -1; order: 3; overflow-x: auto; }
-  .workspace-grid { grid-template-columns: 1fr; }
-  .primary-card { min-height: 520px; }
-  .style-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    grid-template-rows: none;
-    grid-auto-rows: 92px;
+.task-card:hover,
+.new-task-card:hover {
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  transform: translateY(-2px);
+}
+
+.task-card:hover .task-cover img {
+  transform: scale(1.05);
+}
+
+.task-cover {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+}
+
+.task-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.5s;
+}
+
+.task-status {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-weight: 800;
+  background: rgba(255,255,255,0.9);
+}
+
+.status-pending { color: var(--color-text-tertiary); }
+.status-processing { color: var(--color-primary); }
+.status-completed { color: var(--color-success); }
+.status-failed { color: var(--color-danger); }
+
+.task-body {
+  padding: 12px;
+}
+
+.task-body h3,
+.task-body p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-body h3 {
+  font-size: 14px;
+  color: var(--color-text);
+  margin-bottom: 7px;
+}
+
+.task-body p {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  margin-bottom: 12px;
+}
+
+.task-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--color-text-placeholder);
+}
+
+.loading-state,
+.empty-library {
+  padding: 70px 0;
+  text-align: center;
+  color: var(--color-text-tertiary);
+}
+
+.assistant-popup {
+  width: min(420px, calc(100vw - 32px));
+}
+
+.visual-style-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(17, 24, 39, 0.42);
+  backdrop-filter: blur(8px);
+}
+
+.visual-style-dialog {
+  width: min(560px, 100%);
+  max-height: min(720px, calc(100vh - 48px));
+  overflow-y: auto;
+  border-radius: 12px;
+  border: 1px solid var(--color-border);
+  background: var(--color-card);
+  box-shadow: 0 24px 70px rgba(17, 24, 39, 0.28);
+  padding: 18px;
+}
+
+.dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.dialog-head span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--color-primary);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.dialog-head h2 {
+  font-size: 20px;
+  line-height: 1.2;
+  color: var(--color-text);
+}
+
+.visual-style-form {
+  display: grid;
+  gap: 14px;
+}
+
+.field-line {
+  display: grid;
+  gap: 8px;
+}
+
+.field-line span {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+}
+
+.visual-upload-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 160px;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.upload-card {
+  min-height: 160px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 18px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-tertiary);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.16s, background 0.16s;
+}
+
+.upload-card:hover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-bg);
+}
+
+.upload-card input {
+  display: none;
+}
+
+.upload-icon {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--color-primary);
+  box-shadow: var(--shadow-xs);
+}
+
+.upload-card strong {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.upload-card small {
+  max-width: 180px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.large-preview {
+  width: 160px;
+  height: 160px;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--color-border);
+}
+
+.popup-panel {
+  padding: 22px;
+}
+
+.popup-panel h3 {
+  font-size: 18px;
+  margin-bottom: 10px;
+}
+
+.popup-panel p {
+  color: var(--color-text-tertiary);
+  font-size: 14px;
+  line-height: 1.7;
+  margin-bottom: 18px;
+}
+
+@media (max-width: 1180px) {
+  .task-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 920px) {
+  .create-view { overflow: auto; }
+  .create-page {
+    height: auto;
+    min-height: calc(100vh - 64px);
+    grid-template-columns: 1fr;
+    overflow: visible;
   }
+  .editor-panel {
+    justify-content: flex-start;
+    padding: 20px;
+  }
+  .textarea-shell { height: auto; min-height: 340px; }
+  .editor-panel,
+  .config-panel {
+    overflow: visible;
+  }
+  .task-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
-@media (max-width: 680px) {
-  .top-nav { padding: 0 12px; }
-  .nav-brand, .nav-right { display: none; }
-  .nav-tabs { margin-left: auto; overflow-x: auto; }
-  .nav-tab { padding: 7px 10px; white-space: nowrap; }
-  .create-layout { padding: 12px; }
-  .workspace-header { grid-template-columns: 1fr; align-items: start; }
-  .settings-link { width: 100%; }
-  .style-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-auto-rows: 96px;
+@media (max-width: 620px) {
+  .create-page,
+  .library-page {
+    padding: 12px;
   }
-  .control-grid, .custom-visual-panel { grid-template-columns: 1fr; }
-  .custom-preview { height: 96px; }
-  .custom-inline { grid-template-columns: 1fr; }
-  .primary-card { min-height: 560px; }
+  .editor-panel .panel-head {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+  .panel-head,
+  .library-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .custom-inline {
+    grid-template-columns: 1fr;
+  }
+  .value-rotator {
+    padding: 18px;
+  }
+  .rotator-placeholder {
+    top: 18px;
+    left: 18px;
+    font-size: 13px;
+  }
+  .rotator-text {
+    font-size: 24px;
+  }
+  .slot-group {
+    gap: 6px;
+  }
+  .slot-item {
+    height: 34px;
+    padding: 0 8px;
+  }
+  .slot-word {
+    font-size: 18px;
+  }
+  .visual-style-overlay {
+    padding: 12px;
+  }
+  .visual-upload-grid {
+    grid-template-columns: 1fr;
+  }
+  .large-preview {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    height: auto;
+  }
+  .task-grid { grid-template-columns: 1fr; }
 }
 </style>

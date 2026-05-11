@@ -26,14 +26,17 @@ from pyJianYingDraft import (
 from pyJianYingDraft.metadata.font_meta import FontType
 
 from src.draft.animation_scheduler import AnimationScheduler
+from src.utils.rendering import subtitle_preset_for_canvas
 
 # 字幕首尾不允许出现的标点
-_LEADING_PUNCT  = re.compile(r'^[。！？!?…，,；;、：:]+')
-_TRAILING_PUNCT = re.compile(r'[。！？!?…，,；;、]+$')
+_LEADING_PUNCT  = re.compile(r'^[。！？!?…，,；;、：:“”"‘’\'「」『』《》〈〉]+')
+_TRAILING_PUNCT = re.compile(r'[。！？!?…，,；;、：:“”"‘’\'「」『』《》〈〉\s]+$')
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_IMAGE_DURATION_US = 4_000_000  # 4 秒（无配音时使用）
+SUBTITLE_SAFE_WIDTH_RATIO = 0.86
+SUBTITLE_MIN_LINE_CHARS = 22
 
 
 class DraftBuilder:
@@ -43,21 +46,26 @@ class DraftBuilder:
         self,
         config_path: str = "config/settings.json",
         template_dir: str = "config/templates",
+        canvas: Optional[dict] = None,
     ):
         self.config_path = Path(config_path)
         self.template_dir = Path(template_dir)
+        self.canvas_override = canvas or {}
         self.config = self._load_config()
 
     def _load_config(self) -> dict:
         try:
             with open(self.config_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                config = json.load(f)
         except Exception as e:
             logger.warning(f"加载配置失败，使用默认值: {e}")
-            return {
+            config = {
                 "canvas": {"width": 1920, "height": 1080, "fps": 30},
                 "draft_path": "output/drafts",
             }
+        if self.canvas_override:
+            config["canvas"] = {**config.get("canvas", {}), **self.canvas_override}
+        return config
 
     def _add_ken_burns(self, video_seg: VideoSegment, duration_us: int, rng: random.Random):
         """给图片段落加 Ken Burns 关键帧动画（轻微放大为主，偶尔平移）"""
@@ -90,6 +98,25 @@ class DraftBuilder:
         """音效接口保留（未使用）"""
         return None
 
+    @staticmethod
+    def _subtitle_visual_units(text: str) -> float:
+        units = 0.0
+        for char in text or "":
+            if char.isspace():
+                units += 0.35
+            elif ord(char) < 128:
+                units += 0.55
+            else:
+                units += 1.0
+        return units
+
+    @staticmethod
+    def _single_line_subtitle_size(text: str, width: int, height: int, base_size: float, base_ratio: float) -> float:
+        fit_units = max(SUBTITLE_MIN_LINE_CHARS, DraftBuilder._subtitle_visual_units(text))
+        base_px = height * base_ratio
+        single_line_px = (width * SUBTITLE_SAFE_WIDTH_RATIO) / fit_units
+        return max(3.0, base_size * min(1.0, single_line_px / base_px))
+
     def build(
         self,
         segments: List[str],
@@ -114,7 +141,7 @@ class DraftBuilder:
         else:
             draft_path_str = self.config.get("draft_path", "output/drafts")
 
-        is_landscape = (width / height) >= 1.6  # 16:9 横版
+        subtitle_preset = subtitle_preset_for_canvas(width, height)
 
         # 使用传入的 output_dir 作为草稿目录
         draft_path = Path(draft_path_str)
@@ -123,20 +150,25 @@ class DraftBuilder:
         # 保存素材目录（如果存在），因为 create_draft 会删除整个目录
         import tempfile
         temp_backup = None
-        images_dir = draft_path / "images"
-        voiceovers_dir = draft_path / "voiceovers"
+        preserve_dirs = ["images", "voiceovers", "previews"]
+        preserve_files = [p for p in draft_path.glob("*.mp4") if p.is_file()]
 
-        if images_dir.exists() or voiceovers_dir.exists():
+        if any((draft_path / name).exists() for name in preserve_dirs) or preserve_files:
             temp_backup = Path(tempfile.mkdtemp())
             logger.info(f"备份素材到临时目录: {temp_backup}")
 
-            if images_dir.exists():
-                shutil.copytree(images_dir, temp_backup / "images")
-                logger.info(f"备份 images 目录: {len(list(images_dir.glob('*')))} 个文件")
+            for dirname in preserve_dirs:
+                source_dir = draft_path / dirname
+                if source_dir.exists():
+                    shutil.copytree(source_dir, temp_backup / dirname)
+                    logger.info(f"备份 {dirname} 目录: {len(list(source_dir.glob('*')))} 个文件")
 
-            if voiceovers_dir.exists():
-                shutil.copytree(voiceovers_dir, temp_backup / "voiceovers")
-                logger.info(f"备份 voiceovers 目录: {len(list(voiceovers_dir.glob('*')))} 个文件")
+            if preserve_files:
+                files_dir = temp_backup / "_root_files"
+                files_dir.mkdir(exist_ok=True)
+                for file_path in preserve_files:
+                    shutil.copy2(file_path, files_dir / file_path.name)
+                logger.info(f"备份根目录 MP4: {len(preserve_files)} 个文件")
 
         # 直接在 draft_path 的父目录创建草稿，使用 draft_path 的名称
         draft_folder = draft.DraftFolder(draft_path.parent)
@@ -149,13 +181,17 @@ class DraftBuilder:
         if temp_backup:
             logger.info(f"恢复素材到草稿目录: {draft_dir}")
 
-            if (temp_backup / "images").exists():
-                shutil.copytree(temp_backup / "images", draft_dir / "images")
-                logger.info(f"恢复 images 目录")
+            for dirname in preserve_dirs:
+                backup_dir = temp_backup / dirname
+                if backup_dir.exists():
+                    shutil.copytree(backup_dir, draft_dir / dirname)
+                    logger.info(f"恢复 {dirname} 目录")
 
-            if (temp_backup / "voiceovers").exists():
-                shutil.copytree(temp_backup / "voiceovers", draft_dir / "voiceovers")
-                logger.info(f"恢复 voiceovers 目录")
+            root_files = temp_backup / "_root_files"
+            if root_files.exists():
+                for file_path in root_files.glob("*"):
+                    shutil.copy2(file_path, draft_dir / file_path.name)
+                logger.info("恢复根目录 MP4")
 
             # 清理临时目录
             shutil.rmtree(temp_backup)
@@ -187,7 +223,7 @@ class DraftBuilder:
 
             if voiceover_files and i < len(voiceover_files):
                 vo = voiceover_files[i]
-                if Path(vo).exists():
+                if vo and Path(vo).exists():
                     audio_mat   = AudioMaterial(vo)
                     segment_dur = audio_mat.duration
 
@@ -216,22 +252,23 @@ class DraftBuilder:
                 )
 
             # ── 字幕轨道（带动画）────────────────────────────────────────
-            # 16:9 横版：字号7，底部居中（transform_y=-0.8）
-            # 9:16 竖版：字号8，底部居中（transform_y=-0.85）
-            # 字体统一：新青年体；首尾不含标点
+            # 字幕参数和 FFmpeg/前端预览共用同一套 ratio preset；首尾不含标点。
             clean_text = _LEADING_PUNCT.sub('', text)
             clean_text = _TRAILING_PUNCT.sub('', clean_text)
             if not clean_text:
                 clean_text = text  # 极端情况兜底
-            if is_landscape:
-                text_style = draft.TextStyle(size=7.0, color=(1.0, 1.0, 1.0), align=1)
-                default_y  = -0.8
-            else:
-                text_style = draft.TextStyle(size=8.0, color=(1.0, 1.0, 1.0), align=1)
-                default_y  = -0.85
+            subtitle_size = self._single_line_subtitle_size(
+                clean_text,
+                width,
+                height,
+                subtitle_preset["draft_base_size"],
+                subtitle_preset["font_size_ratio"],
+            )
+            text_style = draft.TextStyle(size=subtitle_size, color=(1.0, 1.0, 1.0), align=1)
+            default_y = subtitle_preset["draft_transform_y"]
             text_clip = draft.ClipSettings(transform_y=subtitle_y if subtitle_y is not None else default_y)
-            border   = draft.TextBorder(color=(0.0, 0.0, 0.0), width=40.0)
-            text_seg = TextSegment(clean_text, t_range, font=FontType.新青年体,
+            border = draft.TextBorder(color=(0.0, 0.0, 0.0), width=subtitle_preset["draft_border_width"])
+            text_seg = TextSegment(clean_text, t_range, font=FontType.SourceHanSansCN_Bold,
                                    style=text_style, border=border, clip_settings=text_clip)
 
             if plan.intro is not None:

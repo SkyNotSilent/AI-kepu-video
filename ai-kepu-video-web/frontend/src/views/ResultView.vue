@@ -3,11 +3,8 @@
  */
 <template>
   <div class="result-view">
-    <div v-if="loading" class="loading-container">
-      <van-loading size="24px" vertical>加载中...</van-loading>
-    </div>
-
-    <div v-else-if="taskData" class="layout">
+    <div v-loading="loading" element-loading-text="加载中..." class="result-container">
+      <div v-if="!loading && taskData" class="layout">
       <!-- 左侧成功信息 -->
       <div class="info-side">
         <div class="info-content">
@@ -29,6 +26,10 @@
               <span class="meta-value">{{ taskData.result?.segments_count }} 段</span>
             </div>
             <div class="meta-item">
+              <span class="meta-label">画幅比例</span>
+              <span class="meta-value">{{ exportState?.ratio || '--' }}</span>
+            </div>
+            <div class="meta-item">
               <span class="meta-label">创建时间</span>
               <span class="meta-value">{{ formatTimestamp(taskData.result?.created_at) }}</span>
             </div>
@@ -36,6 +37,7 @@
 
           <div class="nav-actions">
             <button class="nav-btn" @click="handleBackToPrevious">返回编辑</button>
+            <button class="nav-btn" @click="handleBackToExport">导出中心</button>
             <button class="nav-btn" @click="handleBackHome">创建新任务</button>
           </div>
         </div>
@@ -52,13 +54,13 @@
             <div class="field-hint">下载后请解压到剪映草稿所在的文件夹</div>
           </div>
 
-          <div class="download-card" :class="{ disabled: !extractPath?.trim() }" @click="handleDownloadDraft">
+          <div class="download-card" :class="{ disabled: !draftAvailable || !extractPath?.trim() }" @click="handleDownloadDraft">
             <div class="dl-icon draft">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
             </div>
             <div class="dl-info">
               <div class="dl-name">剪映草稿</div>
-              <div class="dl-desc">ZIP 压缩包，导入剪映即可编辑</div>
+              <div class="dl-desc">{{ draftAvailable ? 'ZIP 压缩包，导入剪映即可编辑' : '剪映草稿未生成' }}</div>
             </div>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-placeholder)" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           </div>
@@ -76,10 +78,10 @@
 
           <div v-if="hasOssUrls" class="oss-section">
             <div class="field-label" style="margin-bottom:10px;">云端链接</div>
-            <div v-if="taskData.oss_urls?.draft_zip_url" class="oss-row" @click="copyUrl(taskData.oss_urls.draft_zip_url)">
+            <div v-if="exportState?.outputs?.draft?.url" class="oss-row" @click="copyUrl(exportState.outputs.draft.url)">
               <span>草稿 ZIP</span><span class="oss-copy">复制链接</span>
             </div>
-            <div v-if="taskData.oss_urls?.mp4_url" class="oss-row" @click="copyUrl(taskData.oss_urls.mp4_url)">
+            <div v-if="exportState?.outputs?.mp4?.url" class="oss-row" @click="copyUrl(exportState.outputs.mp4.url)">
               <span>MP4 视频</span><span class="oss-copy">复制链接</span>
             </div>
           </div>
@@ -87,8 +89,8 @@
       </div>
     </div>
 
-    <div v-else class="error-container">
-      <van-empty description="任务不存在" />
+    <div v-if="!loading && !taskData" class="error-container">
+      <el-empty description="任务不存在" />
       <button class="nav-btn" @click="handleBackHome">返回首页</button>
     </div>
   </div>
@@ -97,60 +99,66 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Loading as VanLoading, Empty as VanEmpty, showToast } from 'vant'
-import { getTaskStatus } from '../api/task'
+import { ElMessage } from 'element-plus'
+import { getExportState, getTaskStatus } from '../api/task'
 import { formatTimestamp } from '../utils/format'
 
 const route = useRoute()
 const router = useRouter()
-const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001'
 const taskId = route.params.taskId
 const loading = ref(true)
 const taskData = ref(null)
+const exportState = ref(null)
 const extractPath = ref(localStorage.getItem('extract_path') || '')
 
-const hasOssUrls = computed(() => { const urls = taskData.value?.oss_urls; return urls && (urls.draft_zip_url || urls.mp4_url) })
-const mp4Available = computed(() => taskData.value?.status === 'completed')
+const hasOssUrls = computed(() => Boolean(exportState.value?.outputs?.draft?.url || exportState.value?.outputs?.mp4?.url))
+const mp4Available = computed(() => Boolean(exportState.value?.outputs?.mp4?.available))
+const draftAvailable = computed(() => Boolean(exportState.value?.outputs?.draft?.available))
 
 onMounted(async () => {
   if (!taskId) { router.push('/'); return }
   try {
     const data = await getTaskStatus(taskId)
-    if (data.status !== 'completed') { showToast('任务未完成'); router.push(`/process/${taskId}`); return }
+    if (data.status !== 'completed') { ElMessage.warning('任务未完成'); router.push(`/process/${taskId}`); return }
     taskData.value = data
+    exportState.value = await getExportState(taskId)
     if (data.extract_path && !extractPath.value) extractPath.value = data.extract_path
-  } catch (error) { console.error('获取任务失败:', error); showToast('获取任务失败') }
+  } catch (error) { console.error('获取任务失败:', error); ElMessage.error('获取任务失败') }
   finally { loading.value = false }
 })
 
 const handleDownloadDraft = () => {
+  if (!draftAvailable.value) { ElMessage.warning('剪映草稿未生成'); return }
   const path = extractPath.value?.trim()
-  if (!path) { showToast('请先填写解压路径'); return }
+  if (!path) { ElMessage.warning('请先填写解压路径'); return }
   localStorage.setItem('extract_path', path)
   window.open(`${baseURL}/ai/native/video/kepu/tasks/${taskId}/download?extract_path=${encodeURIComponent(path)}`, '_blank')
 }
 const onPathChange = (e) => { if (e.target.value) localStorage.setItem('extract_path', e.target.value) }
 const handleDownloadMp4 = () => {
-  if (!mp4Available.value) { showToast('MP4 未生成'); return }
+  if (!mp4Available.value) { ElMessage.warning('MP4 未生成'); return }
   window.open(`${baseURL}/ai/native/video/kepu/tasks/${taskId}/download-mp4`, '_blank')
 }
 const copyUrl = async (url) => {
-  try { await navigator.clipboard.writeText(url); showToast('链接已复制') } catch { showToast('复制失败') }
+  try { await navigator.clipboard.writeText(url); ElMessage.success('链接已复制') } catch { ElMessage.error('复制失败') }
 }
 const handleBackHome = () => { router.push('/') }
-const handleBackToPrevious = () => { router.back() }
+const handleBackToPrevious = () => { router.push(`/preview/${taskId}`) }
+const handleBackToExport = () => { router.push(`/export/${taskId}`) }
 </script>
 
 <style scoped>
 .result-view { min-height: 100vh; background: var(--color-bg); }
-.loading-container, .error-container { display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 100vh; gap: 20px; }
+.result-container { min-height: 100vh; }
+.error-container { display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 100vh; gap: 20px; }
 .layout { display: flex; min-height: 100vh; }
 
 /* 左侧 */
 .info-side {
   width: 400px;
   flex-shrink: 0;
-  background: var(--color-bg-secondary);
+  background: linear-gradient(180deg, #ffffff 0%, var(--color-bg-secondary) 100%);
   border-right: 1px solid var(--color-border);
   display: flex;
   align-items: center;
@@ -162,8 +170,8 @@ const handleBackToPrevious = () => { router.back() }
 .success-icon {
   width: 52px;
   height: 52px;
-  background: var(--color-success);
-  border-radius: 50%;
+  background: linear-gradient(135deg, var(--color-success), #22c55e);
+  border-radius: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -188,10 +196,10 @@ const handleBackToPrevious = () => { router.back() }
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  transition: border-color 0.15s, color 0.15s;
+  transition: border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s;
   text-align: center;
 }
-.nav-btn:hover { border-color: var(--color-primary); color: var(--color-primary); }
+.nav-btn:hover { border-color: var(--color-primary); color: var(--color-primary); box-shadow: var(--shadow-xs); transform: translateY(-1px); }
 
 /* 右侧 */
 .download-side {
@@ -215,7 +223,7 @@ const handleBackToPrevious = () => { router.back() }
   font-size: 14px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  background: var(--color-card);
+  background: var(--color-bg-secondary);
   color: var(--color-text);
   outline: none;
   font-family: inherit;
@@ -234,9 +242,9 @@ const handleBackToPrevious = () => { router.back() }
   margin-bottom: 10px;
   border: 1px solid var(--color-border);
   cursor: pointer;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
 }
-.download-card:hover:not(.disabled) { border-color: var(--color-primary); box-shadow: var(--shadow-sm); }
+.download-card:hover:not(.disabled) { border-color: var(--color-primary); box-shadow: var(--shadow-md); transform: translateY(-2px); }
 .download-card.disabled { opacity: 0.4; cursor: not-allowed; }
 
 .dl-icon {
@@ -250,8 +258,8 @@ const handleBackToPrevious = () => { router.back() }
   margin-right: 14px;
   color: #fff;
 }
-.dl-icon.draft { background: var(--color-primary); }
-.dl-icon.mp4 { background: #b91c1c; }
+.dl-icon.draft { background: linear-gradient(135deg, var(--color-primary), #60a5fa); }
+.dl-icon.mp4 { background: linear-gradient(135deg, #1d2129, #4e5969); }
 
 .dl-info { flex: 1; min-width: 0; }
 .dl-name { font-size: 14px; font-weight: 600; color: var(--color-text); margin-bottom: 2px; }
@@ -274,4 +282,21 @@ const handleBackToPrevious = () => { router.back() }
 }
 .oss-row:hover { border-color: var(--color-primary); }
 .oss-copy { font-size: 13px; color: var(--color-primary); font-weight: 500; }
+
+@media (max-width: 820px) {
+  .layout {
+    flex-direction: column;
+  }
+
+  .info-side {
+    width: 100%;
+    padding: 34px 22px;
+    border-right: none;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .download-side {
+    padding: 28px 18px 40px;
+  }
+}
 </style>

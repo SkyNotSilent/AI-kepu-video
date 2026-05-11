@@ -19,19 +19,19 @@ class ScriptRewriter:
     def __init__(self, article_generator: Optional[ArticleGenerator] = None):
         self.article_generator = article_generator or ArticleGenerator()
 
-    def rewrite(self, raw_text: str, style: str, target_length: int = None) -> dict:
+    def rewrite(self, raw_text: str, style: str, target_length: int = None, input_mode: str = None) -> dict:
         """
         输入用户原始文案，输出改写后的旁白脚本和 50-100 字内容总结。
 
-        raw_text <= 200 字时视为主题，按主题生成脚本；raw_text > 200 字时
-        视为用户剧本，尽量保持原意改写为适合配音的旁白。
+        input_mode=theme 时按主题生成；input_mode=script 时按用户文案改写。
+        未传 input_mode 时保留兼容逻辑：raw_text <= 100 字视为主题。
         """
         raw_text = (raw_text or "").strip()
         if not raw_text:
             raise ValueError("文案不能为空")
 
-        if len(raw_text) <= 200:
-            prompt = self._theme_prompt(raw_text, style, target_length or 300)
+        if input_mode == "theme" or (input_mode is None and len(raw_text) <= 100):
+            prompt = self._theme_prompt(raw_text, style, target_length)
         else:
             prompt = self._rewrite_prompt(raw_text, style)
 
@@ -52,6 +52,7 @@ class ScriptRewriter:
         return {"script": script, "summary": summary}
 
     def _theme_prompt(self, theme: str, style: str, target_length: int) -> str:
+        length_line = "目标长度：按内容自然生成，不强制字数" if not target_length else f"目标长度：约 {target_length} 字"
         return f"""你是一位专业短视频旁白编剧。
 
 请根据主题生成一篇适合配音朗读的中文短视频旁白脚本，并给出内容总结。
@@ -59,7 +60,7 @@ class ScriptRewriter:
 要求：
 - 主题：{theme}
 - 风格：{style}
-- 目标长度：约 {target_length} 字
+- {length_line}
 - 语言口语化，适合 TTS 配音
 - 每个自然段 1-3 句话
 - 不要标题、不要说明文字
@@ -122,10 +123,18 @@ class ImagePromptAgent:
     def __init__(self, article_generator: Optional[ArticleGenerator] = None):
         self.article_generator = article_generator or ArticleGenerator()
 
-    def generate_prompt(self, segment_text: str, summary: str, style: str) -> str:
+    def generate_prompt(self, segment_text: str, summary: str, style: str, aspect_ratio: str = None) -> str:
         """
-        输入单段文案、全文总结和画面风格，输出不超过 30 个英文单词的图片 prompt。
+        输入单段文案、全文总结、画面风格和画面比例，输出不超过 30 个英文单词的图片 prompt。
+
+        Args:
+            segment_text: 当前段落文案
+            summary: 全文总结
+            style: 视觉风格
+            aspect_ratio: 画面比例，如 "16:9" (横屏), "9:16" (竖屏), "1:1" (方形)
         """
+        aspect_ratio_line = f"\nAspect ratio: {aspect_ratio}" if aspect_ratio else ""
+
         user_prompt = f"""You are a professional AI image prompt writer.
 
 Create one concise English image prompt for the current narration segment.
@@ -137,12 +146,13 @@ Current narration segment:
 {segment_text}
 
 Visual style constraint:
-{style}
+{style}{aspect_ratio_line}
 
 Requirements:
 - English only
 - 30 words or fewer
 - Describe visible scene, subject, action, setting, mood, and composition
+- Match the composition to the specified aspect ratio
 - No numbering, no explanation, no quotes
 - Do not include text overlays or subtitles"""
 

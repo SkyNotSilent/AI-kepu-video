@@ -1,9 +1,9 @@
 /**
  * Vue Router 配置
- * Hash 模式 + 路由懒加载
+ * History 模式 + 路由懒加载
  */
 
-import { createRouter, createWebHashHistory } from 'vue-router'
+import { createRouter, createWebHistory } from 'vue-router'
 
 const routes = [
   {
@@ -31,6 +31,12 @@ const routes = [
     meta: { title: '预览与编辑' }
   },
   {
+    path: '/export/:taskId',
+    name: 'Export',
+    component: () => import('../views/ExportView.vue'),
+    meta: { title: '导出视频' }
+  },
+  {
     path: '/result/:taskId',
     name: 'Result',
     component: () => import('../views/ResultView.vue'),
@@ -39,7 +45,7 @@ const routes = [
 ]
 
 const router = createRouter({
-  history: createWebHashHistory(),
+  history: createWebHistory(),
   routes
 })
 

@@ -4,7 +4,7 @@
  */
 
 import axios from 'axios'
-import { showToast } from 'vant'
+import { ElMessage } from 'element-plus'
 
 // 从环境变量读取 API 地址
 const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
@@ -47,10 +47,7 @@ request.interceptors.response.use(
 
     // 网络错误
     if (!error.response) {
-      showToast({
-        message: '网络异常，请检查连接',
-        position: 'top'
-      })
+      ElMessage.error('网络异常，请检查连接')
       return Promise.reject(new Error('网络异常'))
     }
 
@@ -59,28 +56,16 @@ request.interceptors.response.use(
 
     switch (status) {
       case 404:
-        showToast({
-          message: data?.detail || '资源不存在',
-          position: 'top'
-        })
+        ElMessage.error(data?.detail || '资源不存在')
         break
       case 429:
-        showToast({
-          message: '服务繁忙，请稍后重试',
-          position: 'top'
-        })
+        ElMessage.error('服务繁忙，请稍后重试')
         break
       case 500:
-        showToast({
-          message: '服务器错误',
-          position: 'top'
-        })
+        ElMessage.error('服务器错误')
         break
       default:
-        showToast({
-          message: data?.detail || '请求失败',
-          position: 'top'
-        })
+        ElMessage.error(data?.detail || '请求失败')
     }
 
     return Promise.reject(error)

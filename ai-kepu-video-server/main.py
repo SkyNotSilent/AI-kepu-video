@@ -7,12 +7,21 @@ InsightCut 主入口
 import sys
 import logging
 import os
+from pathlib import Path
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%H:%M:%S",
 )
+
+env_path = Path(__file__).parent / ".env"
+if env_path.exists():
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(env_path)
+    except ImportError:
+        pass
 
 from src.core.pipeline import VideoEditorPipeline
 

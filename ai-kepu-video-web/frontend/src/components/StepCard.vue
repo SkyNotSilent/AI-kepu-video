@@ -5,7 +5,7 @@
   <div class="step-card" :class="`step-${status}`">
     <div class="step-indicator">
       <div class="indicator-dot">
-        <van-loading v-if="status === 'processing'" size="14px" color="#fff" />
+        <el-icon v-if="status === 'processing'" class="is-loading" :size="14" color="#fff"><Loading /></el-icon>
         <svg v-else-if="status === 'completed'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
         <svg v-else-if="status === 'failed'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
       </div>
@@ -19,13 +19,12 @@
         <span v-else-if="status === 'processing'" class="step-badge">进行中</span>
         <span v-else-if="status === 'failed'" class="step-badge failed">失败</span>
       </div>
-      <van-progress
+      <el-progress
         v-if="status === 'processing' && progress && total"
         :percentage="Math.round((progress / total) * 100)"
-        stroke-width="3"
-        :color="'var(--color-primary)'"
-        track-color="var(--color-divider)"
-        :show-pivot="false"
+        :stroke-width="3"
+        color="var(--color-primary)"
+        :show-text="false"
         class="step-progress"
       />
       <div v-if="status === 'processing' && progress && total" class="step-sub">{{ progress }}/{{ total }}</div>
@@ -35,7 +34,7 @@
 
 <script setup>
 import { computed } from 'vue'
-import { Loading as VanLoading, Progress as VanProgress } from 'vant'
+import { Loading } from '@element-plus/icons-vue'
 import { getStepLabel, formatDuration } from '../utils/format'
 
 const props = defineProps({
@@ -51,7 +50,7 @@ const stepLabel = computed(() => getStepLabel(props.name))
 </script>
 
 <style scoped>
-.step-card { display: flex; gap: 14px; min-height: 52px; }
+.step-card { display: flex; gap: 12px; min-height: 52px; }
 
 .step-indicator { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; width: 24px; }
 
@@ -66,7 +65,7 @@ const stepLabel = computed(() => getStepLabel(props.name))
   background: var(--color-border);
   transition: background 0.3s;
 }
-.step-processing .indicator-dot { background: var(--color-primary); }
+.step-processing .indicator-dot { background: var(--color-primary); box-shadow: 0 0 0 4px var(--accent-glow); }
 .step-completed .indicator-dot { background: var(--color-success); }
 .step-failed .indicator-dot { background: var(--color-danger); }
 
@@ -77,11 +76,11 @@ const stepLabel = computed(() => getStepLabel(props.name))
   min-width: 0;
   padding-bottom: 18px;
   background: var(--color-card);
-  border-radius: var(--radius-sm);
+  border-radius: 8px;
   padding: 12px 14px;
   border: 1px solid var(--color-border);
 }
-.step-processing .step-body { border-color: var(--color-primary); border-left: 2px solid var(--color-primary); }
+.step-processing .step-body { border-color: rgba(37, 99, 235, 0.5); border-left: 2px solid var(--color-primary); box-shadow: var(--shadow-xs); }
 
 .step-header { display: flex; justify-content: space-between; align-items: center; }
 .step-name { font-size: 14px; font-weight: 500; color: var(--color-text-secondary); }

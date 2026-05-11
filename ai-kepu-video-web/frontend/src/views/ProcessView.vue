@@ -1,62 +1,67 @@
 /**
  * 生产页 - 实时进度展示
+ * 直接从 design-preview/index.html 移植
  */
 <template>
   <div class="process-view">
-    <div v-if="loading" class="loading-container">
-      <van-loading size="24px" vertical>加载中...</van-loading>
+    <button type="button" class="exit-btn" @click="leaveProcess">退出</button>
+
+    <div v-if="loading" class="loading-ring-container">
+      <svg class="loading-svg" viewBox="0 0 100 100">
+        <circle class="loading-circle-bg" cx="50" cy="50" r="46" />
+        <circle class="loading-circle-progress" cx="50" cy="50" r="46" :style="{ strokeDashoffset: loadingOffset }" />
+      </svg>
+      <div class="loading-inner-ring"></div>
+      <div class="loading-percent">{{ Math.round(loadingPercent) }}%</div>
+    </div>
+    <div v-if="loading" class="loading-info">
+      <div class="loading-subtitle">AI 智能引擎</div>
+      <div class="loading-task">{{ loadingTask }}</div>
+      <div class="background-tip">退出后任务会继续在后台生成</div>
     </div>
 
-    <div v-else-if="taskData" class="layout">
-      <!-- 左侧进度总览 -->
-      <div class="progress-side">
-        <div class="progress-content">
-          <h2 class="side-title">生成中</h2>
-          <p class="side-desc">AI 正在生成可编辑的视频项目</p>
+    <template v-if="!loading && taskData">
+      <section class="progress-stage">
+        <ProgressBar
+          v-if="taskData.progress"
+          :steps="taskData.progress.steps"
+          :current-step="taskData.progress.current_step"
+        />
 
-          <ProgressBar
-            v-if="taskData.progress"
-            :steps="taskData.progress.steps"
-            :current-step="taskData.progress.current_step"
+        <div v-if="taskData.status === 'pending'" class="pending-tip">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
+          <span>任务已提交，等待调度执行</span>
+        </div>
+        <div v-else class="background-tip">可以退出此页面，任务会继续在后台生成</div>
+      </section>
+
+      <section v-if="taskData.progress" class="steps-panel">
+        <div class="steps-head">
+          <h2>执行步骤</h2>
+          <span>{{ taskData.progress.current_step || 'pending' }}</span>
+        </div>
+        <div class="steps-list">
+          <StepCard
+            v-for="(step, idx) in taskData.progress.steps"
+            :key="step.name"
+            :name="step.name"
+            :status="step.status"
+            :progress="step.progress"
+            :total="step.total"
+            :duration="step.duration"
+            :is-last="idx === taskData.progress.steps.length - 1"
           />
-
-          <div v-if="taskData.status === 'pending'" class="pending-tip">
-            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-placeholder)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
-            </svg>
-            <p>任务排队中，请稍候...</p>
-          </div>
         </div>
-      </div>
-
-      <!-- 右侧步骤详情 -->
-      <div class="steps-side">
-        <div class="steps-content">
-          <h3 class="steps-title">执行步骤</h3>
-          <div v-if="taskData.progress" class="steps-list">
-            <StepCard
-              v-for="(step, idx) in taskData.progress.steps"
-              :key="step.name"
-              :name="step.name"
-              :status="step.status"
-              :progress="step.progress"
-              :total="step.total"
-              :duration="step.duration"
-              :is-last="idx === taskData.progress.steps.length - 1"
-            />
-          </div>
-        </div>
-      </div>
-    </div>
+      </section>
+    </template>
 
     <ErrorDialog v-model:visible="showError" :error-message="errorMessage" :error-detail="errorDetail" @retry="handleRetry" />
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onBeforeUnmount, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Loading as VanLoading, showDialog } from 'vant'
 import { usePolling } from '../composables/usePolling'
 import ProgressBar from '../components/ProgressBar.vue'
 import StepCard from '../components/StepCard.vue'
@@ -66,8 +71,20 @@ const route = useRoute()
 const router = useRouter()
 const taskId = route.params.taskId
 const loading = ref(true)
+const loadingPercent = ref(0)
+const loadingTask = ref('正在初始化...')
 const showError = ref(false)
 const { data: taskData, error: pollingError, startPolling } = usePolling(taskId, 2000)
+let loadingTimer = null
+
+const loadingTasks = [
+  '正在分析文案并生成分镜脚本...',
+  '正在生成画面提示词...',
+  '正在匹配配音参数...',
+  '正在生成分镜图片...',
+  '正在合成音频和字幕...',
+  '正在整理预览素材...',
+]
 
 const errorMessage = computed(() => {
   if (taskData.value?.error) return '生成失败，请重试'
@@ -75,99 +92,241 @@ const errorMessage = computed(() => {
   return '未知错误'
 })
 const errorDetail = computed(() => taskData.value?.error || '')
+const loadingOffset = computed(() => 289 - (289 * loadingPercent.value) / 100)
 
 onMounted(() => {
   if (!taskId) { router.push('/'); return }
+  startLoadingAnimation()
   startPolling()
-  loading.value = false
+})
+
+onBeforeUnmount(() => {
+  clearInterval(loadingTimer)
 })
 
 watch(() => taskData.value?.status, (status) => {
+  if (taskData.value && loading.value) finishLoadingAnimation()
   if (status === 'completed') {
-    showDialog({
-      title: '生成完成',
-      message: '视频已生成完成，您可以进入编辑页面调整内容，或直接导出。',
-      confirmButtonText: '去编辑',
-      cancelButtonText: '直接导出',
-      showCancelButton: true,
-      confirmButtonColor: 'var(--color-primary)',
-    }).then(() => {
-      router.push(`/preview/${taskId}`)
-    }).catch(() => {
-      router.push(`/result/${taskId}`)
-    })
+    router.push(`/preview/${taskId}`)
   }
   if (status === 'failed') showError.value = true
 })
+
+watch(pollingError, (error) => {
+  if (error && loading.value) finishLoadingAnimation()
+})
+
+function startLoadingAnimation() {
+  clearInterval(loadingTimer)
+  loadingTimer = setInterval(() => {
+    const next = Math.min(92, loadingPercent.value + Math.random() * 8 + 2)
+    loadingPercent.value = next
+    const taskIdx = Math.min(Math.floor(next / 16), loadingTasks.length - 1)
+    loadingTask.value = loadingTasks[taskIdx]
+  }, 240)
+}
+
+function finishLoadingAnimation() {
+  clearInterval(loadingTimer)
+  loadingPercent.value = 100
+  loadingTask.value = '初始化完成，正在进入任务面板...'
+  setTimeout(() => {
+    loading.value = false
+  }, 260)
+}
+
+function leaveProcess() {
+  router.push('/')
+}
 
 const handleRetry = () => { router.push('/') }
 </script>
 
 <style scoped>
-.process-view { min-height: 100vh; background: var(--color-bg); }
-.loading-container { display: flex; justify-content: center; align-items: center; min-height: 100vh; }
-.layout { display: flex; min-height: 100vh; }
+/*
+ * LOADING PAGE — 从 design-preview/index.html 原样复制
+ * 设计预览中 .page 基类: height: calc(100vh - 64px); display: flex; flex-direction: column;
+ * #page-loading: align-items: center; justify-content: center; gap: 32px; overflow: hidden;
+ * 此处无 NavBar，所以用 height: 100vh
+ */
+.process-view {
+  height: 100vh;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 32px;
+  overflow: hidden;
+  background: var(--color-bg);
+}
 
-.progress-side {
-  width: 400px;
-  flex-shrink: 0;
-  background: var(--color-bg-secondary);
-  border-right: 1px solid var(--color-border);
+.exit-btn {
+  position: fixed;
+  top: 18px;
+  right: 22px;
+  z-index: 20;
+  height: 38px;
+  padding: 0 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-card);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+
+.exit-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+/* 以下全部从 design-preview 原样复制，只把 CSS 变量替换为 Vue 项目的变量名 */
+
+.loading-ring-container {
+  width: 192px;
+  height: 192px;
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 60px 44px;
 }
 
-.progress-content { width: 100%; max-width: 300px; }
+.loading-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
 
-.side-title {
-  font-size: 24px;
-  font-weight: 700;
+.loading-circle-bg {
+  fill: none;
+  stroke: #222;
+  stroke-width: 4;
+}
+
+.loading-circle-progress {
+  fill: none;
+  stroke: var(--color-primary);
+  stroke-width: 4;
+  stroke-dasharray: 289;
+  stroke-dashoffset: 289;
+  transition: stroke-dashoffset 0.5s;
+}
+
+.loading-inner-ring {
+  position: absolute;
+  inset: 15%;
+  border-radius: 50%;
+  border: 2px solid #222;
+  border-right-color: var(--color-primary);
+  animation: innerSpin 2s linear infinite;
+}
+
+@keyframes innerSpin {
+  to { transform: rotate(360deg); }
+}
+
+.loading-percent {
+  font-size: 18px;
+  font-weight: 600;
   color: var(--color-text);
-  margin-bottom: 6px;
-  letter-spacing: -0.3px;
+  z-index: 10;
 }
 
-.side-desc {
-  font-size: 14px;
+.loading-info {
+  text-align: center;
+}
+
+.loading-subtitle {
+  font-size: 11px;
+  font-weight: 500;
   color: var(--color-text-tertiary);
-  margin-bottom: 36px;
+  text-transform: uppercase;
+  letter-spacing: 3px;
+  margin-bottom: 4px;
+}
+
+.loading-task {
+  font-size: 13px;
+  color: var(--color-primary);
+}
+
+.background-tip {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+/* 进度阶段（任务数据加载后） */
+
+.progress-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  flex-shrink: 0;
 }
 
 .pending-tip {
-  text-align: center;
-  padding: 40px 0;
-  color: var(--color-text-placeholder);
-  font-size: 14px;
-}
-.pending-tip svg {
-  margin-bottom: 12px;
-  animation: pulse 2s ease-in-out infinite;
-}
-@keyframes pulse {
-  0%, 100% { opacity: 0.5; transform: scale(1); }
-  50% { opacity: 1; transform: scale(1.04); }
+  margin-top: 22px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
 }
 
-.steps-side {
-  flex: 1;
+.pending-tip svg {
+  width: 18px;
+  height: 18px;
+  animation: tickPulse 1.8s ease-in-out infinite;
+}
+
+.steps-panel {
+  width: min(760px, 100%);
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+
+.steps-head {
   display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 60px;
-  overflow-y: auto;
+  justify-content: space-between;
+  margin-bottom: 12px;
 }
 
-.steps-content { width: 100%; max-width: 480px; }
-
-.steps-title {
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--color-text);
-  margin-bottom: 24px;
-  letter-spacing: -0.2px;
+.steps-head h2 {
+  font-size: 16px;
 }
 
-.steps-list { display: flex; flex-direction: column; }
+.steps-head span {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+}
+
+.steps-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+}
+
+@keyframes tickPulse {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.05); }
+}
+
+@media (max-width: 720px) {
+  .steps-list {
+    grid-template-columns: 1fr;
+  }
+}
 </style>

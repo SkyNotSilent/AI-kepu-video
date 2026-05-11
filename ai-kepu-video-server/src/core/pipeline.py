@@ -9,12 +9,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from src.text.generator import ArticleGenerator
-from src.text.segmenter import LongTextSegmenter, TextSegmenter
+from src.text.segmenter import TextSegmenter
 from src.text.agents import ImagePromptAgent, ScriptRewriter
 from src.media.image_generator import ImageGenerator
 from src.draft.voiceover import VoiceOverGenerator
 from src.draft.builder import DraftBuilder
 from src.export.ffmpeg_exporter import FFmpegExporter
+from src.utils.rendering import canvas_for_ratio
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ class VideoEditorPipeline:
         theme: str,
         config_path: str = "config/settings.json",
         output_dir: str = "output",
+        canvas: dict = None,
     ):
         self.theme = theme
         self.config_path = config_path
@@ -37,7 +39,6 @@ class VideoEditorPipeline:
         self.script_rewriter = ScriptRewriter(self.article_generator)
         self.image_prompt_agent = ImagePromptAgent(self.article_generator)
         self.text_segmenter = TextSegmenter()
-        self.long_text_segmenter = LongTextSegmenter()
 
         # 读取画布尺寸，传给图片生成器
         import json
@@ -45,23 +46,26 @@ class VideoEditorPipeline:
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 _cfg = json.load(f)
-            _canvas = _cfg.get("canvas", {})
-            self._canvas_width  = _canvas.get("width", 1080)
-            self._canvas_height = _canvas.get("height", 1920)
+            _canvas = _cfg.get("canvas") or canvas_for_ratio("16:9")
+            if canvas:
+                _canvas = {**_canvas, **canvas}
+            self._canvas_width = _canvas.get("width", 1920)
+            self._canvas_height = _canvas.get("height", 1080)
         except Exception:
-            self._canvas_width  = 1080
-            self._canvas_height = 1920
+            fallback_canvas = canvas_for_ratio("16:9")
+            self._canvas_width = fallback_canvas["width"]
+            self._canvas_height = fallback_canvas["height"]
 
         self.image_generator = ImageGenerator(output_dir=str(self.output_dir / "images"))
         self.voiceover_generator = VoiceOverGenerator(
             output_dir=str(self.output_dir / "voiceovers")
         )
-        self.draft_builder = DraftBuilder(config_path=config_path)
+        self.draft_builder = DraftBuilder(config_path=config_path, canvas=canvas)
 
         # FFmpeg 导出通道
         self._ffmpeg_enabled = _cfg.get("ffmpeg", {}).get("enabled", True)
         try:
-            self.ffmpeg_exporter = FFmpegExporter(config_path=config_path)
+            self.ffmpeg_exporter = FFmpegExporter(config_path=config_path, canvas=canvas)
         except Exception as e:
             logger.warning(f"FFmpeg 导出不可用: {e}")
             self.ffmpeg_exporter = None
@@ -79,12 +83,25 @@ class VideoEditorPipeline:
         self._style_suffix: str = ""
         self._text_style: str = "温暖感人"
 
+        # 计算画面比例
+        self._aspect_ratio = self._calculate_aspect_ratio(self._canvas_width, self._canvas_height)
+
     def _split_styles(self, style: str) -> tuple:
         parts = (style or "").split("|", 2)
         text_style = parts[0] if len(parts) > 0 and parts[0] else "温暖感人"
         visual_style = parts[1] if len(parts) > 1 and parts[1] else "写实风格"
         visual_style_suffix = parts[2] if len(parts) > 2 and parts[2] else ""
         return text_style, visual_style, visual_style_suffix
+
+    def _calculate_aspect_ratio(self, width: int, height: int) -> str:
+        """根据宽高计算画面比例标识"""
+        ratio = width / height
+        if ratio >= 1.6:  # 横屏
+            return "16:9"
+        elif ratio <= 0.65:  # 竖屏
+            return "9:16"
+        else:  # 方形
+            return "1:1"
 
     def generate_script(self, style: str = "温暖感人", length: int = 300) -> str:
         """步骤 1-3：改写/生成脚本、长文本分段、逐段生成图像 prompts。"""
@@ -109,9 +126,9 @@ class VideoEditorPipeline:
         logger.info(f"脚本生成完成，共 {len(self.article)} 字")
         logger.info(f"内容总结: {self.summary}")
 
-        # 步骤 2：长文本分段
-        logger.info("\n[2/4] 长文本分段...")
-        self.segments = self.long_text_segmenter.split(self.article)
+        # 步骤 2：短节奏分段
+        logger.info("\n[2/4] 短节奏分段...")
+        self.segments = self.text_segmenter.split(self.article)
         logger.info(f"分段完成，共 {len(self.segments)} 段")
         for i, seg in enumerate(self.segments):
             logger.info(f"  [{i+1}] {seg}")
@@ -124,6 +141,7 @@ class VideoEditorPipeline:
                 segment,
                 self.summary,
                 visual_style_suffix or visual_style,
+                aspect_ratio=self._aspect_ratio,
             )
             self.image_prompts.append(prompt)
             logger.info(f"  [{i+1}] {prompt}")
@@ -140,12 +158,17 @@ class VideoEditorPipeline:
         if script is not None and script.strip() != self.article.strip():
             logger.info("\n检测到脚本修改，重新分段...")
             self.article = script
-            self.segments = self.long_text_segmenter.split(self.article)
+            self.segments = self.text_segmenter.split(self.article)
             logger.info(f"重新分段完成，共 {len(self.segments)} 段")
             if not self.summary:
                 self.summary = self.article[:100]
             self.image_prompts = [
-                self.image_prompt_agent.generate_prompt(seg, self.summary, visual_style)
+                self.image_prompt_agent.generate_prompt(
+                    seg,
+                    self.summary,
+                    visual_style_suffix or visual_style,
+                    aspect_ratio=self._aspect_ratio
+                )
                 for seg in self.segments
             ]
 

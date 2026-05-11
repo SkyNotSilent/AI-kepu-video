@@ -15,24 +15,87 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Optional
 
+from src.utils.rendering import subtitle_preset_for_canvas
+
 logger = logging.getLogger(__name__)
 
-_LEADING_PUNCT = re.compile(r'^[。！？!?…，,；;、：:]+')
-_TRAILING_PUNCT = re.compile(r'[。！？!?…，,；;、]+$')
+_LEADING_PUNCT = re.compile(r'^[。！？!?…，,；;、：:“”"‘’\'「」『』《》〈〉]+')
+_TRAILING_PUNCT = re.compile(r'[。！？!?…，,；;、：:“”"‘’\'「」『』《》〈〉\s]+$')
 
 DEFAULT_DURATION_US = 4_000_000  # 4s fallback
+DEFAULT_FADE_SECONDS = 0.3
+SUBTITLE_SAFE_WIDTH_RATIO = 0.86
+SUBTITLE_MIN_LINE_CHARS = 22
+
+
+def _load_render_config(config_path: str = "config/settings.json", canvas_override: Optional[dict] = None) -> dict:
+    cfg = FFmpegExporter._load_config(config_path)
+    canvas = {**cfg.get("canvas", {}), **(canvas_override or {})}
+    width = canvas.get("width", 1920)
+    height = canvas.get("height", 1080)
+    fps = canvas.get("fps", 30)
+    subtitle_preset = subtitle_preset_for_canvas(width, height)
+    fontsize = int(height * subtitle_preset["font_size_ratio"])
+    border_width = max(2, int(round(fontsize * 0.05)))
+
+    return {
+        "canvas": {
+            "width": width,
+            "height": height,
+            "fps": fps,
+            "aspect_ratio": width / height,
+        },
+        "duration": {
+            "default_seconds": DEFAULT_DURATION_US / 1_000_000,
+        },
+        "subtitle": {
+            "font_size": fontsize,
+            "font_size_ratio": fontsize / height,
+            "font_color": "#ffffff",
+            "border_color": "#000000",
+            "border_width": border_width,
+            "x": "center",
+            "y_ratio": subtitle_preset["y_ratio"],
+            "draft_transform_y": subtitle_preset["draft_transform_y"],
+            "draft_border_width": subtitle_preset["draft_border_width"],
+            "font_family": "SourceHanSansCN_Bold",
+        },
+        "fade": {
+            "seconds": DEFAULT_FADE_SECONDS,
+        },
+        "ken_burns": {
+            "scale_min": 1.05,
+            "scale_max": 1.12,
+            "types": [0, 1, 2, 3, 4, 5, 6],
+            "weights": [30, 12, 12, 12, 12, 11, 11],
+        },
+    }
+
+
+def build_animation_params(segment_count: int, animation_seed: Optional[int] = None) -> list:
+    rng = random.Random(animation_seed)
+    params = []
+    for _ in range(segment_count):
+        params.append({
+            "scale_end": rng.uniform(1.05, 1.12),
+            "anim_type": rng.choices(
+                [0, 1, 2, 3, 4, 5, 6],
+                weights=[30, 12, 12, 12, 12, 11, 11],
+            )[0],
+        })
+    return params
 
 
 class FFmpegExporter:
     """FFmpeg 视频导出器"""
 
-    def __init__(self, config_path: str = "config/settings.json"):
+    def __init__(self, config_path: str = "config/settings.json", canvas: Optional[dict] = None):
         self._cfg = self._load_config(config_path)
-        canvas = self._cfg.get("canvas", {})
-        self.width = canvas.get("width", 1920)
-        self.height = canvas.get("height", 1080)
-        self.fps = canvas.get("fps", 30)
-        self.is_landscape = (self.width / self.height) >= 1.6
+        self.render_config = _load_render_config(config_path, canvas)
+        canvas = self.render_config["canvas"]
+        self.width = canvas["width"]
+        self.height = canvas["height"]
+        self.fps = canvas["fps"]
 
         ff_cfg = self._cfg.get("ffmpeg", {})
         self.crf = ff_cfg.get("crf", 20)
@@ -41,6 +104,10 @@ class FFmpegExporter:
         self._ffmpeg = self._find_ffmpeg()
         self._encoder, self._use_crf = self._detect_encoder()
         self._font = self._find_font(ff_cfg.get("font_path"))
+
+    @staticmethod
+    def get_render_config(config_path: str = "config/settings.json", canvas: Optional[dict] = None) -> dict:
+        return _load_render_config(config_path, canvas)
 
     # ── 初始化辅助 ─────────────────────────────────────────────────
 
@@ -92,6 +159,21 @@ class FFmpegExporter:
         if override:
             candidates.append(override)
         candidates += [
+            # Shared subtitle target: Source Han / Noto CJK bold-ish sans.
+            "/System/Library/Fonts/SourceHanSansCN-Bold.otf",
+            "/Library/Fonts/SourceHanSansCN-Bold.otf",
+            "/System/Library/Fonts/NotoSansCJKsc-Bold.otf",
+            "/Library/Fonts/NotoSansCJKsc-Bold.otf",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+            "/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+            # macOS
+            "/System/Library/Fonts/STHeiti Medium.ttc",
+            "/System/Library/Fonts/STHeiti Light.ttc",
+            "/System/Library/Fonts/Hiragino Sans GB.ttc",
+            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+            "/System/Library/Fonts/Supplemental/Songti.ttc",
+            "/Library/Fonts/Arial Unicode.ttf",
             # Linux (Docker / 云端)
             "/usr/share/fonts/noto-cjk/NotoSansCJKsc-Regular.otf",
             "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
@@ -170,18 +252,15 @@ class FFmpegExporter:
 
         font_esc = self._font.replace("\\", "/").replace(":", "\\:") if self._font else ""
 
-        if self.is_landscape:
-            fontsize = int(self.height * 0.055)  # 约 59px @1080
-            y_pos = f"h*0.88"
-        else:
-            fontsize = int(self.height * 0.038)  # 约 73px @1920
-            y_pos = f"h*0.88"
+        fontsize = self._subtitle_font_size(clean)
+        subtitle_cfg = self.render_config["subtitle"]
+        y_pos = f"h*{subtitle_cfg['y_ratio']}"
 
         parts = [
             f"drawtext=text='{escaped}'",
             f"fontsize={fontsize}",
             "fontcolor=white",
-            "borderw=3",
+            f"borderw={subtitle_cfg['border_width']}",
             "bordercolor=black",
             "x=(w-text_w)/2",
             f"y={y_pos}",
@@ -190,6 +269,25 @@ class FFmpegExporter:
             parts.insert(1, f"fontfile='{font_esc}'")
 
         return ":".join(parts)
+
+    @staticmethod
+    def _subtitle_visual_units(text: str) -> float:
+        units = 0.0
+        for char in text or "":
+            if char.isspace():
+                units += 0.35
+            elif ord(char) < 128:
+                units += 0.55
+            else:
+                units += 1.0
+        return units
+
+    def _subtitle_font_size(self, text: str) -> int:
+        base_ratio = self.render_config["subtitle"]["font_size_ratio"]
+        base_size = self.height * base_ratio
+        fit_units = max(SUBTITLE_MIN_LINE_CHARS, self._subtitle_visual_units(text))
+        single_line_size = (self.width * SUBTITLE_SAFE_WIDTH_RATIO) / fit_units
+        return max(12, int(min(base_size, single_line_size)))
 
     # ── 单段编码 ───────────────────────────────────────────────────
 
@@ -215,16 +313,14 @@ class FFmpegExporter:
             total_frames = 1
 
         # 构建滤镜链
-        # zoompan 内部用 2x 分辨率以获得亚像素精度，再 scale 回目标尺寸
-        zw = self.width * 2
-        zh = self.height * 2
-        # 输入图片先放大到 zoompan 工作区（需要比 2x 稍大以容纳缩放+平移）
-        margin = max(scale_end, 1.0) + 0.05
-        upw = int(zw * margin)
-        uph = int(zh * margin)
+        # 优化：先缩小到目标分辨率附近，再做动画处理，避免在超高分辨率上计算
+        # zoompan 工作区设为目标分辨率的 1.2 倍（足够容纳缩放+平移）
+        margin = max(scale_end, 1.0) + 0.2
+        zw = int(self.width * margin)
+        zh = int(self.height * margin)
         # 保持偶数
-        upw += upw % 2
-        uph += uph % 2
+        zw += zw % 2
+        zh += zh % 2
 
         delta = scale_end - 1.0
         d = total_frames
@@ -232,8 +328,8 @@ class FFmpegExporter:
         cx = "iw/2-(iw/zoom/2)"
         cy = "ih/2-(ih/zoom/2)"
         # 单方向匀速平移（从 A→B，不来回）
-        # 平移总量控制在画面的 1.5%，配合放大不会露出黑边
-        px = 0.015 * zw
+        # 平移总量控制在画面的 1%，配合放大不会露出黑边
+        px = 0.01 * zw
         py = 0.01 * zh
 
         if anim_type == 1:    # 放大 + 缓慢左移
@@ -265,19 +361,15 @@ class FFmpegExporter:
 
         drawtext = self._drawtext_expr(text)
 
-        # 淡入淡出时长（秒）
-        fade_duration = 0.3
-        fade_frames = int(fade_duration * self.fps)
+        fade_duration = self.render_config["fade"]["seconds"]
 
-        # 视频滤镜链：缩放 → Ken Burns → 缩放回目标尺寸 → 字幕 → 淡入淡出
+        # 视频滤镜链：先缩放覆盖工作区 → 居中裁切 → Ken Burns 动画 → 缩放到目标尺寸 → 字幕
         vf = (
-            f"scale={upw}:{uph}:force_original_aspect_ratio=decrease,"
-            f"pad={upw}:{uph}:(ow-iw)/2:(oh-ih)/2:black,"
+            f"scale={zw}:{zh}:force_original_aspect_ratio=increase,"
+            f"crop={zw}:{zh},"
             f"{zoompan},"
             f"scale={self.width}:{self.height}:flags=lanczos,"
-            f"{drawtext},"
-            f"fade=t=in:st=0:d={fade_duration},"
-            f"fade=t=out:st={duration_s - fade_duration}:d={fade_duration}"
+            f"{drawtext}"
         )
 
         output_path = str(Path(tmp_dir) / f"seg_{index:04d}.mp4")
@@ -327,7 +419,7 @@ class FFmpegExporter:
 
         logger.info(f"  [FFmpeg 段 {index+1}] 编码 {duration_s:.1f}s ...")
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=300,
+            cmd, capture_output=True, text=True, timeout=600,
             encoding="utf-8", errors="replace",
         )
         if result.returncode != 0:
@@ -395,22 +487,11 @@ class FFmpegExporter:
         voiceover_files: Optional[List[str]],
         output_path: str,
         animation_seed: Optional[int] = None,
+        animation_params: Optional[List[dict]] = None,
     ) -> str:
         logger.info(f"[FFmpeg] 开始导出 MP4，共 {len(segments)} 段")
 
-        rng = random.Random(animation_seed)
-
-        # 预生成每段的 Ken Burns 参数
-        # 7 种运动：0=纯放大, 1=左移, 2=右移, 3=上移, 4=下移, 5=左上→右下, 6=右下→左上
-        # 纯放大占 30%，其余六种各约 12%
-        anim_params = []
-        for _ in segments:
-            scale_end = rng.uniform(1.05, 1.12)
-            anim_type = rng.choices(
-                [0, 1, 2, 3, 4, 5, 6],
-                weights=[30, 12, 12, 12, 12, 11, 11],
-            )[0]
-            anim_params.append((anim_type, scale_end))
+        anim_params = animation_params or build_animation_params(len(segments), animation_seed)
 
         tmp_dir = tempfile.mkdtemp(prefix="ffmpeg_export_")
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
@@ -423,7 +504,9 @@ class FFmpegExporter:
                 vo = None
                 if voiceover_files and i < len(voiceover_files):
                     vo = voiceover_files[i]
-                at, se = anim_params[i]
+                param = anim_params[i]
+                at = param["anim_type"] if isinstance(param, dict) else param[0]
+                se = param["scale_end"] if isinstance(param, dict) else param[1]
                 return i, self._build_segment_clip(
                     index=i,
                     image_path=media_paths[i],

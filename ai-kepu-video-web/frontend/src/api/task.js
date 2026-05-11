@@ -31,6 +31,13 @@ export function updateConfig(data) {
   })
 }
 
+export function getRenderConfig() {
+  return request({
+    url: '/ai/native/video/kepu/render-config',
+    method: 'get'
+  })
+}
+
 /**
  * 创建视频生成任务
  * @param {Object} data - 任务参数
@@ -51,6 +58,23 @@ export function createTask(data) {
 }
 
 /**
+ * 使用本地上传图片创建可编辑任务
+ * @param {FormData} formData - images/style/voice_type/name
+ * @returns {Promise<{task_id: string, status: string}>}
+ */
+export function createTaskFromImages(formData) {
+  return request({
+    url: '/ai/native/video/kepu/tasks/create-from-images',
+    method: 'post',
+    data: formData,
+    headers: {
+      'Content-Type': 'multipart/form-data'
+    },
+    timeout: 120000
+  })
+}
+
+/**
  * 查询任务状态
  * @param {string} taskId - 任务ID
  * @returns {Promise<Object>} 任务详情
@@ -63,11 +87,11 @@ export function getTaskStatus(taskId) {
 }
 
 /**
- * 取消任务（预留接口）
+ * 删除任务
  * @param {string} taskId - 任务ID
- * @returns {Promise<{success: boolean}>}
+ * @returns {Promise<{message: string}>}
  */
-export function cancelTask(taskId) {
+export function deleteTask(taskId) {
   return request({
     url: `/ai/native/video/kepu/tasks/${taskId}`,
     method: 'delete'
@@ -84,6 +108,84 @@ export function getSegments(taskId) {
     url: `/ai/native/video/kepu/tasks/${taskId}/segments`,
     method: 'get'
   })
+}
+
+export function getTaskRenderConfig(taskId) {
+  return request({
+    url: `/ai/native/video/kepu/tasks/${taskId}/render-config`,
+    method: 'get'
+  })
+}
+
+export function renderPreview(taskId, segmentIndex = null) {
+  return request({
+    url: `/ai/native/video/kepu/tasks/${taskId}/preview-render`,
+    method: 'post',
+    params: segmentIndex === null ? {} : { segment_index: segmentIndex },
+    timeout: 300000
+  })
+}
+
+export function getExportState(taskId) {
+  return request({
+    url: `/ai/native/video/kepu/tasks/${taskId}/export-state`,
+    method: 'get'
+  })
+}
+
+export function createExport(taskId, data) {
+  return request({
+    url: `/ai/native/video/kepu/tasks/${taskId}/exports`,
+    method: 'post',
+    data
+  })
+}
+
+export function getExportJob(taskId, jobId) {
+  return request({
+    url: `/ai/native/video/kepu/tasks/${taskId}/exports/${jobId}`,
+    method: 'get'
+  })
+}
+
+export function selectDraftFolder(taskId) {
+  return request({
+    url: `/ai/native/video/kepu/tasks/${taskId}/draft-folder/select`,
+    method: 'post',
+    timeout: 300000
+  })
+}
+
+export function validateDraftFolder(taskId, data) {
+  return request({
+    url: `/ai/native/video/kepu/tasks/${taskId}/draft-folder/validate`,
+    method: 'post',
+    data
+  })
+}
+
+export function getTaskAssets(taskId, params = {}) {
+  return request({
+    url: `/ai/native/video/kepu/tasks/${taskId}/assets`,
+    method: 'get',
+    params
+  })
+}
+
+export function selectSegmentImage(taskId, segmentIndex, assetId) {
+  return request({
+    url: `/ai/native/video/kepu/tasks/${taskId}/segments/${segmentIndex}/select-image`,
+    method: 'post',
+    data: { asset_id: assetId }
+  })
+}
+
+export function getSubtitleUrl(taskId) {
+  return `/ai/native/video/kepu/tasks/${taskId}/subtitle.srt`
+}
+
+export function getAssetsDownloadUrl(taskId, type = 'all') {
+  return `/ai/native/video/kepu/tasks/${taskId}/assets/download?type=${encodeURIComponent(type)}`
 }
 
 /**

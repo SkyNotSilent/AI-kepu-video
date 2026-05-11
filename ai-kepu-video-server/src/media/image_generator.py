@@ -65,10 +65,7 @@ class ImageGenerator:
             style_suffix: 自定义风格 prompt 后缀，优先级高于 style 预设
             filename: 自定义文件名（不含扩展名），如果为 None 则使用 segment_{index:03d}
         """
-        if filename:
-            output_path = self.output_dir / f"{filename}.jpg"
-        else:
-            output_path = self.output_dir / f"segment_{index:03d}.jpg"
+        output_stem = filename or f"segment_{index:03d}"
 
         # 组合 prompt + 风格
         suffix = (style_suffix or "").strip() or STYLE_PRESETS.get(style, STYLE_PRESETS["写实风格"])
@@ -113,6 +110,7 @@ class ImageGenerator:
             raise RuntimeError(f"图像生成接口返回异常: {data}")
 
         image_bytes = self._extract_image_bytes(data)
+        output_path = self.output_dir / f"{output_stem}{self._detect_image_extension(image_bytes)}"
         output_path.write_bytes(image_bytes)
         logger.info(f"图像保存: {output_path} ({len(image_bytes)} 字节)")
         return str(output_path)
@@ -124,14 +122,31 @@ class ImageGenerator:
     def _extract_image_bytes(self, data: dict) -> bytes:
         item = data["data"][0]
         if item.get("url"):
-            img_resp = requests.get(item["url"], timeout=60)
-            img_resp.raise_for_status()
-            return img_resp.content
+            # 下载图片，超时 90 秒，失败后重试 1 次
+            for attempt in range(2):
+                try:
+                    img_resp = requests.get(item["url"], timeout=90)
+                    img_resp.raise_for_status()
+                    return img_resp.content
+                except Exception as e:
+                    if attempt == 1:
+                        raise
+                    logger.warning(f"图片下载失败（第{attempt+1}次），3秒后重试: {e}")
+                    time.sleep(3)
         if item.get("b64_json"):
             return base64.b64decode(item["b64_json"])
         if item.get("base64"):
             return base64.b64decode(item["base64"])
         raise RuntimeError(f"图像生成接口返回缺少 url/b64_json: {data}")
+
+    def _detect_image_extension(self, image_bytes: bytes) -> str:
+        if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+            return ".png"
+        if image_bytes.startswith(b"\xff\xd8\xff"):
+            return ".jpg"
+        if image_bytes.startswith(b"RIFF") and image_bytes[8:12] == b"WEBP":
+            return ".webp"
+        return ".jpg"
 
     def _pick_size(self, width: int, height: int) -> str:
         """根据宽高比选择常见 OpenAI/兼容接口支持的 size 参数。"""

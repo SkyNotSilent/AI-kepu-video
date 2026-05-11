@@ -1,23 +1,19 @@
 /**
- * 进度条组件
+ * 进度环组件 - 设计预览风格
  */
 <template>
-  <div class="progress-bar">
-    <div class="progress-ring-wrapper">
-      <svg class="progress-ring" width="88" height="88" viewBox="0 0 88 88">
-        <circle class="ring-bg" cx="44" cy="44" r="36" />
-        <circle class="ring-fill" cx="44" cy="44" r="36" :style="{ strokeDashoffset: dashOffset }" />
+  <div class="loading-container">
+    <div class="loading-ring-container">
+      <svg class="loading-svg" viewBox="0 0 100 100">
+        <circle class="loading-circle-bg" cx="50" cy="50" r="46" />
+        <circle class="loading-circle-progress" cx="50" cy="50" r="46" :style="{ strokeDashoffset: dashOffset }" />
       </svg>
-      <div class="ring-text">
-        <span class="ring-percent">{{ percentage }}</span>
-        <span class="ring-unit">%</span>
-      </div>
+      <div class="loading-inner-ring"></div>
+      <div class="loading-percent">{{ percentage }}%</div>
     </div>
-    <div class="progress-info">
-      <div class="progress-label">{{ currentStepLabel }}</div>
-      <div class="progress-track">
-        <div class="progress-fill" :style="{ width: percentage + '%' }"></div>
-      </div>
+    <div class="loading-info">
+      <div class="loading-subtitle">AI 智能引擎</div>
+      <div class="loading-task">{{ currentStepLabel }}</div>
     </div>
   </div>
 </template>
@@ -32,57 +28,94 @@ const props = defineProps({
 })
 
 const percentage = computed(() => calculateProgress(props.steps))
-const circumference = 2 * Math.PI * 36
+const circumference = 2 * Math.PI * 46
 const dashOffset = computed(() => circumference - (percentage.value / 100) * circumference)
 
 const currentStepLabel = computed(() => {
-  if (!props.currentStep) return '准备中...'
+  if (!props.currentStep) return '正在初始化...'
   const step = props.steps.find(s => s.name === props.currentStep)
-  if (!step) return '处理中...'
+  if (!step) return '处理中'
   const label = getStepLabel(props.currentStep)
-  if (step.status === 'processing' && step.progress && step.total) return `${label} (${step.progress}/${step.total})`
+  if (step.status === 'processing' && step.progress && step.total) return `${label} ${step.progress}/${step.total}`
   return label
 })
 </script>
 
 <style scoped>
-.progress-bar {
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 32px;
+}
+
+.loading-ring-container {
+  width: 192px;
+  height: 192px;
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 20px;
-  padding: 20px;
-  background: var(--color-card);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--color-border);
+  justify-content: center;
 }
 
-.progress-ring-wrapper { position: relative; flex-shrink: 0; }
-.progress-ring { transform: rotate(-90deg); }
+.loading-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
 
-.ring-bg { fill: none; stroke: var(--color-divider); stroke-width: 5; }
-.ring-fill {
+.loading-circle-bg {
+  fill: none;
+  stroke: #e5e6eb;
+  stroke-width: 4;
+}
+
+.loading-circle-progress {
   fill: none;
   stroke: var(--color-primary);
-  stroke-width: 5;
-  stroke-linecap: round;
-  stroke-dasharray: 226.19;
-  transition: stroke-dashoffset 0.6s ease;
+  stroke-width: 4;
+  stroke-dasharray: 289;
+  stroke-dashoffset: 289;
+  transition: stroke-dashoffset 0.5s;
 }
 
-.ring-text {
+.loading-inner-ring {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  display: flex;
-  align-items: baseline;
+  inset: 15%;
+  border-radius: 50%;
+  border: 2px solid #e5e6eb;
+  border-right-color: var(--color-primary);
+  animation: innerSpin 2s linear infinite;
 }
-.ring-percent { font-size: 22px; font-weight: 700; color: var(--color-text); }
-.ring-unit { font-size: 11px; font-weight: 600; color: var(--color-text-tertiary); margin-left: 1px; }
 
-.progress-info { flex: 1; min-width: 0; }
-.progress-label { font-size: 14px; font-weight: 500; color: var(--color-text-secondary); margin-bottom: 10px; }
+.loading-percent {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-text);
+  z-index: 10;
+}
 
-.progress-track { height: 4px; background: var(--color-divider); border-radius: 2px; overflow: hidden; }
-.progress-fill { height: 100%; background: var(--color-primary); border-radius: 2px; transition: width 0.6s ease; }
+.loading-info {
+  text-align: center;
+}
+
+.loading-subtitle {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 3px;
+  margin-bottom: 4px;
+}
+
+.loading-task {
+  font-size: 13px;
+  color: var(--color-primary);
+}
+
+@keyframes innerSpin {
+  to { transform: rotate(360deg); }
+}
 </style>

@@ -7,6 +7,7 @@ SQLite 数据库客户端
 import logging
 import sqlite3
 import os
+import uuid
 from datetime import datetime
 from typing import Optional, List, Dict
 from contextlib import contextmanager
@@ -42,6 +43,8 @@ class SQLiteClient:
                     theme TEXT NOT NULL,
                     style TEXT NOT NULL DEFAULT '温暖感人',
                     length INTEGER NOT NULL DEFAULT 300,
+                    ratio TEXT NOT NULL DEFAULT '16:9',
+                    voice_type TEXT,
                     status TEXT NOT NULL DEFAULT 'pending',
                     current_step TEXT DEFAULT 'pending',
                     error TEXT,
@@ -93,14 +96,39 @@ class SQLiteClient:
                     task_id TEXT NOT NULL,
                     segment_index INTEGER NOT NULL,
                     text TEXT NOT NULL,
+                    image_prompt TEXT,
                     image_path TEXT,
                     image_url TEXT,
+                    image_status TEXT DEFAULT 'completed',
+                    image_error TEXT,
                     audio_path TEXT,
                     audio_url TEXT,
+                    audio_status TEXT DEFAULT 'completed',
+                    audio_error TEXT,
                     duration REAL,
                     created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
                     updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
                     UNIQUE(task_id, segment_index)
+                );
+
+                CREATE TABLE IF NOT EXISTS task_assets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    asset_id TEXT NOT NULL UNIQUE,
+                    task_id TEXT NOT NULL,
+                    segment_index INTEGER,
+                    asset_type TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    path TEXT,
+                    url TEXT,
+                    label TEXT,
+                    prompt TEXT,
+                    text TEXT,
+                    voice_type TEXT,
+                    metadata_json TEXT,
+                    status TEXT DEFAULT 'completed',
+                    error_message TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
                 );
             """)
 
@@ -123,6 +151,20 @@ class SQLiteClient:
                     "INSERT INTO tts_voices (voice_id, name, gender, description, is_enabled, sort_order) VALUES (?,?,?,?,?,?)",
                     voices
                 )
+
+            # 为已有数据库添加 ratio 字段（兼容旧表结构）
+            try:
+                cursor.execute("ALTER TABLE tasks ADD COLUMN ratio TEXT NOT NULL DEFAULT '16:9'")
+            except sqlite3.OperationalError:
+                pass  # 字段已存在
+            try:
+                cursor.execute("ALTER TABLE tasks ADD COLUMN voice_type TEXT")
+            except sqlite3.OperationalError:
+                pass  # 字段已存在
+            try:
+                cursor.execute("ALTER TABLE task_segments ADD COLUMN image_prompt TEXT")
+            except sqlite3.OperationalError:
+                pass  # 字段已存在
 
             conn.commit()
             conn.close()
@@ -169,7 +211,7 @@ class SQLiteClient:
     def _rows_to_dicts(self, rows):
         return [dict(r) for r in rows]
 
-    def create_task(self, task_id: str, theme: str, style: str, length: int, name: str = None) -> bool:
+    def create_task(self, task_id: str, theme: str, style: str, length: int, name: str = None, ratio: str = "16:9", voice_type: str = None) -> bool:
         if not self._initialized:
             self._init_db()
         if not self._initialized:
@@ -178,8 +220,8 @@ class SQLiteClient:
             conn = self._get_conn()
             cur = conn.cursor()
             cur.execute(
-                "INSERT INTO tasks (task_id, name, theme, style, length, status, current_step) VALUES (?,?,?,?,?,?,?)",
-                (task_id, name or theme[:20], theme, style, length, 'pending', 'pending')
+                "INSERT INTO tasks (task_id, name, theme, style, length, ratio, voice_type, status, current_step) VALUES (?,?,?,?,?,?,?,?,?)",
+                (task_id, name or theme[:20], theme, style, length, ratio, voice_type, 'pending', 'pending')
             )
             steps = [
                 "text_generation",
@@ -200,6 +242,27 @@ class SQLiteClient:
             return True
         except Exception as e:
             logger.error(f"创建任务记录失败: {e}")
+            return False
+
+    def delete_task(self, task_id: str) -> bool:
+        if not self._initialized:
+            self._init_db()
+        if not self._initialized:
+            return False
+        try:
+            conn = self._get_conn()
+            cur = conn.cursor()
+            cur.execute("DELETE FROM task_segments WHERE task_id=?", (task_id,))
+            cur.execute("DELETE FROM task_assets WHERE task_id=?", (task_id,))
+            cur.execute("DELETE FROM task_steps WHERE task_id=?", (task_id,))
+            cur.execute("DELETE FROM task_results WHERE task_id=?", (task_id,))
+            cur.execute("DELETE FROM tasks WHERE task_id=?", (task_id,))
+            conn.commit()
+            conn.close()
+            logger.info(f"任务记录已删除: {task_id}")
+            return True
+        except Exception as e:
+            logger.error(f"删除任务记录失败: {e}")
             return False
 
     def update_task_status(self, task_id: str, status: str, current_step: str = None, error: str = None) -> bool:
@@ -400,12 +463,14 @@ class SQLiteClient:
             cur = conn.cursor()
             for seg in segments:
                 cur.execute(
-                    """INSERT INTO task_segments (task_id, segment_index, text, image_path, image_url, audio_path, audio_url, duration)
-                       VALUES (?,?,?,?,?,?,?,?)
+                    """INSERT INTO task_segments (task_id, segment_index, text, image_prompt, image_path, image_url, audio_path, audio_url, duration)
+                       VALUES (?,?,?,?,?,?,?,?,?)
                        ON CONFLICT(task_id, segment_index) DO UPDATE SET
-                       text=excluded.text, image_path=excluded.image_path, image_url=excluded.image_url,
+                       text=excluded.text, image_prompt=excluded.image_prompt,
+                       image_path=excluded.image_path, image_url=excluded.image_url,
                        audio_path=excluded.audio_path, audio_url=excluded.audio_url, duration=excluded.duration""",
                     (task_id, seg['segment_index'], seg['text'],
+                     seg.get('image_prompt'),
                      seg.get('image_path'), seg.get('image_url'),
                      seg.get('audio_path'), seg.get('audio_url'), seg.get('duration'))
                 )
@@ -444,7 +509,7 @@ class SQLiteClient:
             set_parts = []
             values = []
             for key, value in updates.items():
-                if key in ['text', 'image_path', 'image_url', 'audio_path', 'audio_url', 'duration']:
+                if key in ['text', 'image_prompt', 'image_path', 'image_url', 'audio_path', 'audio_url', 'duration']:
                     set_parts.append(f"{key}=?")
                     values.append(value)
             if not set_parts:
@@ -461,6 +526,98 @@ class SQLiteClient:
         except Exception as e:
             logger.error(f"更新段落失败: {e}")
             return False
+
+    def save_task_asset(self, task_id: str, asset_type: str, source: str, path: str = None,
+                        url: str = None, segment_index: int = None, label: str = None,
+                        prompt: str = None, text: str = None, voice_type: str = None,
+                        metadata_json: str = None) -> Dict:
+        if not self._initialized:
+            self._init_db()
+        if not self._initialized:
+            return {}
+        try:
+            conn = self._get_conn()
+            cur = conn.cursor()
+            if path:
+                cur.execute(
+                    """SELECT * FROM task_assets
+                       WHERE task_id=? AND asset_type=? AND source=? AND path=?
+                       ORDER BY id DESC LIMIT 1""",
+                    (task_id, asset_type, source, path)
+                )
+                existing = cur.fetchone()
+                if existing:
+                    cur.execute(
+                        """UPDATE task_assets SET segment_index=?, source=?, url=?, label=?, prompt=?, text=?,
+                           voice_type=?, metadata_json=?, updated_at=datetime('now','localtime')
+                           WHERE asset_id=?""",
+                        (segment_index, source, url, label, prompt, text, voice_type, metadata_json, existing["asset_id"])
+                    )
+                    conn.commit()
+                    cur.execute("SELECT * FROM task_assets WHERE asset_id=?", (existing["asset_id"],))
+                    row = dict(cur.fetchone())
+                    conn.close()
+                    return row
+
+            asset_id = uuid.uuid4().hex
+            cur.execute(
+                """INSERT INTO task_assets
+                   (asset_id, task_id, segment_index, asset_type, source, path, url, label, prompt, text, voice_type, metadata_json)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (asset_id, task_id, segment_index, asset_type, source, path, url, label, prompt, text, voice_type, metadata_json)
+            )
+            conn.commit()
+            cur.execute("SELECT * FROM task_assets WHERE asset_id=?", (asset_id,))
+            row = dict(cur.fetchone())
+            conn.close()
+            return row
+        except Exception as e:
+            logger.error(f"保存任务资产失败: {e}")
+            return {}
+
+    def list_task_assets(self, task_id: str, asset_type: str = None, segment_index: int = None) -> List[Dict]:
+        if not self._initialized:
+            self._init_db()
+        if not self._initialized:
+            return []
+        try:
+            conn = self._get_conn()
+            cur = conn.cursor()
+            sql = "SELECT * FROM task_assets WHERE task_id=?"
+            values = [task_id]
+            if asset_type:
+                if asset_type == "upload":
+                    sql += " AND source='upload'"
+                else:
+                    sql += " AND asset_type=?"
+                    values.append(asset_type)
+            if segment_index is not None:
+                sql += " AND segment_index=?"
+                values.append(segment_index)
+            sql += " ORDER BY created_at DESC, id DESC"
+            cur.execute(sql, values)
+            rows = [dict(r) for r in cur.fetchall()]
+            conn.close()
+            return rows
+        except Exception as e:
+            logger.error(f"获取任务资产失败: {e}")
+            return []
+
+    def get_task_asset(self, task_id: str, asset_id: str) -> Optional[Dict]:
+        if not self._initialized:
+            self._init_db()
+        if not self._initialized:
+            return None
+        try:
+            conn = self._get_conn()
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM task_assets WHERE task_id=? AND asset_id=?", (task_id, asset_id))
+            row = cur.fetchone()
+            conn.close()
+            return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"获取任务资产失败: {e}")
+            return None
 
 
 # 全局 SQLite 客户端实例

@@ -10,14 +10,25 @@ import shutil
 import tempfile
 from pathlib import Path
 from threading import Thread
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 from .task_manager import task_manager, TaskStatus
 from src.core.pipeline import VideoEditorPipeline
 from src.utils.cos_uploader import COSUploader
 from src.export.ffmpeg_exporter import FFmpegExporter
+from src.utils.rendering import canvas_for_ratio, normalize_ratio
+from src.config import Config
 
 logger = logging.getLogger(__name__)
+
+
+def _bounded_concurrency(value, total: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = 1
+    parsed = max(1, min(8, parsed))
+    return min(parsed, max(1, total))
 
 
 class TaskExecutor:
@@ -26,14 +37,14 @@ class TaskExecutor:
     def __init__(self):
         pass
 
-    def execute_task(self, task_id: str, theme: str, style: str, length: int, voice_type: Optional[str] = None):
+    def execute_task(self, task_id: str, theme: str, style: str, length: int, voice_type: Optional[str] = None, ratio: str = "16:9", input_mode: str = "script"):
         """在后台线程中执行任务"""
-        thread = Thread(target=self._run_task, args=(task_id, theme, style, length, voice_type))
+        thread = Thread(target=self._run_task, args=(task_id, theme, style, length, voice_type, ratio, input_mode))
         thread.daemon = True
         thread.start()
         logger.info(f"[{task_id}] 启动后台任务线程")
 
-    def _run_task(self, task_id: str, theme: str, style: str, length: int, voice_type: Optional[str] = None):
+    def _run_task(self, task_id: str, theme: str, style: str, length: int, voice_type: Optional[str] = None, ratio: str = "16:9", input_mode: str = "script"):
         """执行任务的实际逻辑"""
         import time
         from src.database import mysql_client
@@ -48,7 +59,11 @@ class TaskExecutor:
             # 更新任务状态为处理中
             task_manager.update_task_status(task_id, TaskStatus.PROCESSING)
             logger.info(f"[{task_id}] ========== 开始执行任务 ==========")
-            logger.info(f"[{task_id}] 输入长度: {len(theme)}, 风格: {style}, 目标字数: {length}")
+            input_mode = "theme" if input_mode == "theme" else "script"
+            logger.info(f"[{task_id}] 输入长度: {len(theme)}, 输入模式: {input_mode}, 风格: {style}, 目标字数: {length}")
+            ratio = normalize_ratio(ratio or getattr(task, "ratio", "16:9"))
+            canvas = canvas_for_ratio(ratio)
+            logger.info(f"[{task_id}] 视频比例: {ratio}, 画布: {canvas['width']}x{canvas['height']}")
 
             # 解析 style 字段：格式为 "文章风格|画面风格|自定义画面prompt后缀"
             parts = (style or "").split("|", 2)
@@ -73,7 +88,8 @@ class TaskExecutor:
             # 创建 pipeline，指定草稿目录
             pipeline = VideoEditorPipeline(
                 theme=theme,
-                output_dir=str(draft_dir)
+                output_dir=str(draft_dir),
+                canvas=canvas,
             )
 
             # 步骤 1: 文案改写 / 主题生成
@@ -83,6 +99,7 @@ class TaskExecutor:
                 theme,
                 style=text_style,
                 target_length=length,
+                input_mode=input_mode,
             )
             pipeline.article = rewrite_result["script"]
             pipeline.summary = rewrite_result["summary"]
@@ -90,11 +107,21 @@ class TaskExecutor:
             logger.info(f"[{task_id}] 内容总结: {pipeline.summary}")
             task.complete_step("text_generation")
 
-            # 步骤 2: 长文本分段
-            logger.info(f"[{task_id}] [2/7] 开始长文本分段...")
-            pipeline.segments = pipeline.long_text_segmenter.split(pipeline.article)
+            # 步骤 2: 短节奏分段，约 20 字一段，对应更密的画面切换
+            logger.info(f"[{task_id}] [2/7] 开始短节奏分段...")
+            pipeline.segments = pipeline.text_segmenter.split(pipeline.article)
             segments_count = len(pipeline.segments)
             logger.info(f"[{task_id}] [2/7] 分段完成，共 {segments_count} 段")
+            generation_config = Config.generation_config()
+            tts_concurrency = _bounded_concurrency(
+                generation_config.get("tts_concurrency", 1), segments_count
+            )
+            image_concurrency = _bounded_concurrency(
+                generation_config.get("image_concurrency", 1), segments_count
+            )
+            logger.info(
+                f"[{task_id}] 生成并发配置: 配音={tts_concurrency}, 生图={image_concurrency}"
+            )
 
             # 步骤 3: 逐段生成图像 prompts
             logger.info(f"[{task_id}] [3/7] 开始逐段生成图像描述...")
@@ -113,43 +140,95 @@ class TaskExecutor:
             logger.info(f"[{task_id}] [3/7] 图像描述生成完成")
             task.complete_step("image_prompt_generation")
 
-            # 步骤 4-5: 配音和生图互不依赖，并行执行；各自内部串行，避免 API 限流
+            # 步骤 4-5: 配音和生图互不依赖，并行执行；内部并发由模型配置页控制。
             logger.info(f"[{task_id}] [4-5/7] 开始并行生成配音和图像（共 {segments_count} 段）...")
             pipeline.voiceover_files = [None] * segments_count
             pipeline.media_paths = [None] * segments_count
 
-            def generate_voiceovers():
-                task.start_step("voiceover_generation")
-                for i, seg in enumerate(pipeline.segments):
-                    logger.info(f"[{task_id}] 配音进度: {i+1}/{segments_count}")
-                    if i > 0:
+            def generate_voiceover_item(i: int, seg: str):
+                logger.info(f"[{task_id}] 配音进度: {i+1}/{segments_count}")
+                try:
+                    if tts_concurrency == 1 and i > 0:
                         time.sleep(0.5)
                     path = pipeline.voiceover_generator.generate(
                         seg, filename=f"seg_{i:03d}", voice_type=voice_type
                     )
-                    pipeline.voiceover_files[i] = path
-                    task.update_step_progress("voiceover_generation", i + 1, segments_count)
-                task.complete_step("voiceover_generation")
+                    return i, {"status": "success", "path": path, "error": None}
+                except Exception as e:
+                    logger.error(f"[{task_id}] 音频生成失败 [片段 {i+1}]: {e}")
+                    return i, {"status": "failed", "path": None, "error": str(e)}
 
-            def generate_images():
-                task.start_step("image_generation")
-                for i, prompt in enumerate(image_prompts):
-                    logger.info(f"[{task_id}] 图像进度: {i+1}/{segments_count}")
+            def generate_image_item(i: int, prompt: str):
+                logger.info(f"[{task_id}] 图像进度: {i+1}/{segments_count}")
+                try:
                     path = pipeline.image_generator.generate(
                         prompt,
                         index=i,
                         style=visual_style,
                         style_suffix=visual_style_suffix,
+                        width=canvas["width"],
+                        height=canvas["height"],
                     )
-                    pipeline.media_paths[i] = path
-                    task.update_step_progress("image_generation", i + 1, segments_count)
+                    return i, {"status": "success", "path": path, "error": None}
+                except Exception as e:
+                    logger.error(f"[{task_id}] 图片生成失败 [片段 {i+1}]: {e}")
+                    return i, {"status": "failed", "path": None, "error": str(e)}
+
+            def generate_voiceovers():
+                task.start_step("voiceover_generation")
+                completed = 0
+                failed_items = []
+                with ThreadPoolExecutor(max_workers=tts_concurrency) as voice_executor:
+                    futures = [
+                        voice_executor.submit(generate_voiceover_item, i, seg)
+                        for i, seg in enumerate(pipeline.segments)
+                    ]
+                    for future in as_completed(futures):
+                        i, result = future.result()
+                        if result["status"] == "success":
+                            pipeline.voiceover_files[i] = result["path"]
+                        else:
+                            failed_items.append({"index": i, "type": "audio", "error": result["error"]})
+                            pipeline.voiceover_files[i] = None
+                        completed += 1
+                        task.update_step_progress("voiceover_generation", completed, segments_count)
+                if failed_items:
+                    logger.warning(f"[{task_id}] 部分音频生成失败: {failed_items}")
+                task.complete_step("voiceover_generation")
+                return failed_items
+
+            def generate_images():
+                task.start_step("image_generation")
+                completed = 0
+                failed_items = []
+                with ThreadPoolExecutor(max_workers=image_concurrency) as image_executor:
+                    futures = [
+                        image_executor.submit(generate_image_item, i, prompt)
+                        for i, prompt in enumerate(image_prompts)
+                    ]
+                    for future in as_completed(futures):
+                        i, result = future.result()
+                        if result["status"] == "success":
+                            pipeline.media_paths[i] = result["path"]
+                        else:
+                            failed_items.append({"index": i, "type": "image", "error": result["error"]})
+                            pipeline.media_paths[i] = None
+                        completed += 1
+                        task.update_step_progress("image_generation", completed, segments_count)
+                if failed_items:
+                    logger.warning(f"[{task_id}] 部分图片生成失败: {failed_items}")
                 task.complete_step("image_generation")
+                return failed_items
 
             with ThreadPoolExecutor(max_workers=2) as executor:
                 voice_future = executor.submit(generate_voiceovers)
                 image_future = executor.submit(generate_images)
-                voice_future.result()
-                image_future.result()
+                voice_failures = voice_future.result()
+                image_failures = image_future.result()
+
+            all_failures = voice_failures + image_failures
+            if all_failures:
+                logger.warning(f"[{task_id}] 资源生成部分失败，共 {len(all_failures)} 项: {all_failures}")
 
             logger.info(f"[{task_id}] [4-5/7] 配音和图像生成完成")
 
@@ -232,7 +311,7 @@ class TaskExecutor:
             video_url = None
 
             try:
-                ffmpeg_exporter = FFmpegExporter()
+                ffmpeg_exporter = FFmpegExporter(canvas=canvas)
                 video_path = draft_dir / f"{draft_name}.mp4"
 
                 logger.info(f"[{task_id}] 使用 FFmpeg 生成视频...")
@@ -264,6 +343,15 @@ class TaskExecutor:
             # 保存段落数据到数据库
             logger.info(f"[{task_id}] 保存段落数据到数据库...")
 
+            # 构建失败信息映射
+            failure_map = {}
+            for failure in all_failures:
+                idx = failure["index"]
+                ftype = failure["type"]
+                if idx not in failure_map:
+                    failure_map[idx] = {}
+                failure_map[idx][ftype] = failure["error"]
+
             segments_data = []
             cos_uploader = COSUploader()
 
@@ -273,6 +361,12 @@ class TaskExecutor:
             for i, seg_text in enumerate(pipeline.segments):
                 image_path = pipeline.media_paths[i] if i < len(pipeline.media_paths) else None
                 audio_path = pipeline.voiceover_files[i] if i < len(pipeline.voiceover_files) else None
+
+                # 获取失败信息
+                image_error = failure_map.get(i, {}).get("image")
+                audio_error = failure_map.get(i, {}).get("audio")
+                image_status = "failed" if image_error else ("completed" if image_path else "pending")
+                audio_status = "failed" if audio_error else ("completed" if audio_path else "pending")
 
                 # 上传图片到 COS
                 image_url = None
@@ -299,12 +393,47 @@ class TaskExecutor:
                 seg_data = {
                     'segment_index': i,
                     'text': seg_text,
+                    'image_prompt': image_prompts[i] if i < len(image_prompts) else "",
                     'image_path': image_path,
                     'image_url': image_url,
+                    'image_status': image_status,
+                    'image_error': image_error,
                     'audio_path': audio_path,
                     'audio_url': audio_url,
+                    'audio_status': audio_status,
+                    'audio_error': audio_error,
                 }
                 segments_data.append(seg_data)
+
+                # 保存图片资源（包括失败状态）
+                mysql_client.save_task_asset(
+                    task_id=task_id,
+                    asset_type="image",
+                    source="generated",
+                    path=image_path,
+                    url=image_url,
+                    segment_index=i,
+                    label=f"AI 生成 · 分镜 {i + 1}",
+                    prompt=seg_data["image_prompt"],
+                    text=seg_text,
+                    status=image_status,
+                    error_message=image_error,
+                )
+
+                # 保存音频资源（包括失败状态）
+                mysql_client.save_task_asset(
+                    task_id=task_id,
+                    asset_type="audio",
+                    source="generated",
+                    path=audio_path,
+                    url=audio_url,
+                    segment_index=i,
+                    label=f"配音 · 分镜 {i + 1}",
+                    text=seg_text,
+                    voice_type=voice_type,
+                    status=audio_status,
+                    error_message=audio_error,
+                )
 
             mysql_client.save_segments(task_id, segments_data)
 

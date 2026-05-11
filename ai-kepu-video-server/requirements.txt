@@ -1,5 +1,6 @@
 anthropic>=0.94.0
 requests>=2.31.0
+python-dotenv>=1.0.0
 fastapi
 uvicorn
 oss2>=2.18.0

@@ -1,179 +1,320 @@
 <template>
-  <div class="segment-card">
-    <div class="media-col">
-      <div class="segment-index">{{ index + 1 }}</div>
-      <div class="thumbnail" @click="previewImage">
-        <img v-if="segment.image_url" :key="segment.image_url" :src="segment.image_url" class="thumbnail-img" alt="图片" />
-        <div v-else class="thumbnail-empty">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-        </div>
+  <article class="segment-card" :class="{ active }" @click="emit('select', index)">
+    <div class="segment-thumb" @click.stop="previewImage">
+      <img
+        v-if="segment.image_url && imageLoadState !== 'error'"
+        :src="segment.image_url"
+        :alt="`分镜 ${index + 1}`"
+        @error="handleImageError"
+        @load="handleImageLoad"
+      />
+      <div v-else-if="imageLoadState === 'error' || segment.image_status === 'failed'" class="thumb-error">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="12" y1="8" x2="12" y2="12"/>
+          <line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        <span class="error-text">加载失败</span>
       </div>
-      <div class="audio-wrapper">
-        <audio v-if="segment.audio_url" :key="segment.audio_url" :src="segment.audio_url" controls class="audio-player"></audio>
-        <div v-else class="audio-empty">暂无音频</div>
+      <div v-else class="thumb-empty">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
       </div>
     </div>
 
-    <div class="text-col">
-      <textarea :value="localText" class="text-input" rows="4" placeholder="请输入文案" @input="localText = $event.target.value" @blur="onTextBlur"></textarea>
+    <div class="segment-main">
+      <div class="segment-meta">
+        <span class="segment-index">镜头 {{ String(index + 1).padStart(2, '0') }}</span>
+        <span class="time-code">{{ timeCode }}</span>
+      </div>
+      <div v-if="segment.image_status === 'failed' || segment.audio_status === 'failed'" class="error-badges">
+        <span v-if="segment.image_status === 'failed'" class="error-badge">
+          <svg viewBox="0 0 24 24" fill="currentColor" width="10" height="10">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+          </svg>
+          图片失败
+        </span>
+        <span v-if="segment.audio_status === 'failed'" class="error-badge">
+          <svg viewBox="0 0 24 24" fill="currentColor" width="10" height="10">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+          </svg>
+          音频失败
+        </span>
+      </div>
+      <p :class="{ placeholder: !segment.text }">{{ segment.text || '点击编辑文案' }}</p>
+      <div v-if="previewPlaying || previewProgress > 0" class="segment-preview-track">
+        <div class="segment-preview-fill" :style="{ width: `${Math.round(previewProgress * 100)}%` }"></div>
+      </div>
+      <div class="segment-tools">
+        <button
+          type="button"
+          title="单段预览"
+          :class="{ playing: previewPlaying }"
+          :disabled="!segment.audio_url && !segment.image_url"
+          @click.stop="emit('preview-segment', index)"
+        >
+          <svg v-if="!previewPlaying" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>
+        </button>
+        <button type="button" title="重新生成图片" @click.stop="emit('regenerate-image', index)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M21 15l-5-5L5 21"/></svg>
+        </button>
+        <button type="button" title="更换图片" @click.stop="imageInput?.click()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </button>
+        <button type="button" title="撤销图片替换" :disabled="!canUndoImage" @click.stop="emit('undo-image', index)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg>
+        </button>
+        <button type="button" title="重新生成音频" @click.stop="emit('regenerate-audio', index)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+        </button>
+      </div>
     </div>
 
-    <div class="action-col">
-      <button class="action-btn" :disabled="regeneratingImage || !edited" @click="onRegenerateImage">
-        <van-loading v-if="regeneratingImage" size="12px" />
-        <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-        <span>重新生成图片</span>
-      </button>
-      <button class="action-btn" :disabled="uploadingImage" @click="onUploadImage">
-        <van-loading v-if="uploadingImage" size="12px" />
-        <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-        <span>更换图片</span>
-      </button>
-      <button class="action-btn" :disabled="regeneratingAudio || !edited" @click="onRegenerateAudio">
-        <van-loading v-if="regeneratingAudio" size="12px" />
-        <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
-        <span>重新生成音频</span>
-      </button>
-    </div>
+    <input ref="imageInput" type="file" accept="image/jpeg,image/jpg,image/png,image/webp" class="hidden-input" @change="onImageSelected" />
 
-    <input ref="imageInput" type="file" accept="image/jpeg,image/jpg,image/png,image/webp" style="display: none" @change="onImageSelected" />
-  </div>
+    <el-image-viewer
+      v-if="showImageViewer"
+      :url-list="previewImages"
+      :initial-index="0"
+      @close="showImageViewer = false"
+    />
+  </article>
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
-import { showImagePreview, Loading as VanLoading } from 'vant'
+import { computed, ref } from 'vue'
+import { ElImageViewer } from 'element-plus'
 
 const props = defineProps({
   segment: { type: Object, required: true },
-  index: { type: Number, required: true }
+  index: { type: Number, required: true },
+  active: { type: Boolean, default: false },
+  aspectRatio: { type: String, default: '16 / 9' },
+  previewPlaying: { type: Boolean, default: false },
+  previewProgress: { type: Number, default: 0 },
+  canUndoImage: { type: Boolean, default: false },
 })
-const emit = defineEmits(['edit', 'regenerate-image', 'regenerate-audio', 'upload-image'])
-
-const localText = ref(props.segment.text || '')
-const edited = ref(false)
-const regeneratingImage = ref(false)
-const regeneratingAudio = ref(false)
-const uploadingImage = ref(false)
+const emit = defineEmits(['select', 'edit', 'preview-segment', 'regenerate-image', 'regenerate-audio', 'upload-image', 'undo-image'])
 const imageInput = ref(null)
+const imageLoadState = ref('idle')
+const showImageViewer = ref(false)
+const previewImages = ref([])
 
-watch(() => props.segment.text, (newVal) => {
-  if (newVal !== undefined && newVal !== null && newVal !== localText.value) {
-    localText.value = newVal
-    edited.value = false
-  }
-}, { immediate: true })
+const timeCode = computed(() => {
+  const duration = Number(props.segment.duration || 0)
+  if (!duration) return '--:--'
+  const minutes = Math.floor(duration / 60)
+  const seconds = Math.floor(duration % 60)
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+})
 
-function onTextBlur() {
-  if (localText.value !== props.segment.text) {
-    edited.value = true
-    emit('edit', props.index, localText.value)
+function handleImageError() {
+  imageLoadState.value = 'error'
+}
+
+function handleImageLoad() {
+  imageLoadState.value = 'loaded'
+}
+
+function previewImage() {
+  if (props.segment.image_url && imageLoadState.value !== 'error') {
+    previewImages.value = [props.segment.image_url]
+    showImageViewer.value = true
   }
 }
-function previewImage() { if (props.segment.image_url) showImagePreview({ images: [props.segment.image_url], closeable: true }) }
-function onRegenerateImage() { emit('regenerate-image', props.index) }
-function onRegenerateAudio() { emit('regenerate-audio', props.index) }
-function onUploadImage() { imageInput.value?.click() }
-function onImageSelected(event) { const file = event.target.files?.[0]; if (file) { emit('upload-image', props.index, file); event.target.value = '' } }
+
+function onImageSelected(event) {
+  const file = event.target.files?.[0]
+  if (file) {
+    emit('upload-image', props.index, file)
+    event.target.value = ''
+  }
+}
 </script>
 
 <style scoped>
 .segment-card {
-  display: flex;
-  gap: 16px;
-  align-items: stretch;
-  background: var(--color-card);
-  border-radius: var(--radius-sm);
-  padding: 16px;
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px;
   border: 1px solid var(--color-border);
-  transition: box-shadow 0.15s;
+  border-left: 3px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--color-card);
+  cursor: pointer;
+  transition: border-color 0.18s, box-shadow 0.18s, transform 0.18s;
 }
-.segment-card:hover { box-shadow: var(--shadow-sm); }
 
-.media-col { display: flex; flex-direction: column; align-items: center; gap: 8px; flex-shrink: 0; width: 150px; }
+.segment-card:hover {
+  border-color: rgba(37, 99, 235, 0.38);
+  transform: translateY(-1px);
+}
 
-.segment-index {
-  width: 24px;
-  height: 24px;
-  background: var(--color-text);
-  color: #fff;
+.segment-card.active {
+  border-left-color: var(--color-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.segment-thumb {
+  width: 74px;
+  aspect-ratio: v-bind(aspectRatio);
   border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: 700;
+  overflow: hidden;
+  background: var(--color-bg-secondary);
 }
 
-.thumbnail { width: 150px; height: 94px; cursor: pointer; border-radius: 6px; overflow: hidden; }
-.thumbnail:hover { opacity: 0.9; }
-.thumbnail-img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.thumbnail-empty {
+.segment-thumb img {
   width: 100%;
   height: 100%;
-  background: var(--color-bg-secondary);
-  border: 1px dashed var(--color-border);
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-text-placeholder);
+  object-fit: cover;
+  display: block;
 }
 
-.audio-wrapper { width: 100%; }
-.audio-player { width: 100%; height: 32px; }
-.audio-empty {
-  height: 32px;
-  background: var(--color-bg-secondary);
-  border: 1px dashed var(--color-border);
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-text-placeholder);
-  font-size: 12px;
-}
-
-.text-col { flex: 1; min-width: 0; display: flex; }
-
-.text-input {
+.thumb-empty {
   width: 100%;
-  font-size: 14px;
-  line-height: 1.7;
-  color: var(--color-text);
-  padding: 10px 12px;
-  background: var(--color-bg-secondary);
-  border-radius: 6px;
-  border: 1px solid transparent;
-  transition: all 0.15s;
-  resize: none;
-  font-family: inherit;
-  box-sizing: border-box;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: var(--color-text-placeholder);
+  border: 1px dashed var(--color-border);
 }
-.text-input:focus {
-  outline: none;
-  background: var(--color-card);
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px var(--color-primary-bg);
+
+.thumb-empty svg {
+  width: 18px;
+  height: 18px;
 }
-.text-input::placeholder { color: var(--color-text-placeholder); }
 
-.action-col { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; width: 140px; justify-content: center; }
-
-.action-btn {
+.thumb-error {
+  width: 100%;
+  height: 100%;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 7px 10px;
-  border-radius: 6px;
-  border: 1px solid var(--color-border);
-  background: var(--color-card);
-  color: var(--color-text-tertiary);
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.15s;
-  white-space: nowrap;
+  justify-content: center;
+  gap: 4px;
+  color: #ee0a24;
+  background: rgba(238, 10, 36, 0.05);
 }
-.action-btn:hover:not(:disabled) { border-color: var(--color-primary); color: var(--color-primary); }
-.action-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.thumb-error svg {
+  width: 20px;
+  height: 20px;
+}
+
+.thumb-error .error-text {
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.error-badges {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.error-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  background: rgba(238, 10, 36, 0.9);
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 3px;
+}
+
+.segment-main {
+  min-width: 0;
+}
+
+.segment-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.segment-index,
+.time-code {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--color-text-tertiary);
+}
+
+.segment-card.active .segment-index {
+  color: var(--color-primary);
+}
+
+p {
+  margin: 0;
+  height: 36px;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+p.placeholder {
+  color: var(--color-text-placeholder);
+}
+
+.segment-preview-track {
+  height: 3px;
+  margin-top: 7px;
+  border-radius: 999px;
+  background: var(--color-border);
+  overflow: hidden;
+}
+
+.segment-preview-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-primary);
+  transition: width 0.1s linear;
+}
+
+.segment-tools {
+  display: flex;
+  gap: 4px;
+  margin-top: 7px;
+}
+
+.segment-tools button {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.segment-tools button:hover:not(:disabled) {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.segment-tools button.playing {
+  color: #fff;
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.segment-tools button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.segment-tools svg {
+  width: 13px;
+  height: 13px;
+}
+
+.hidden-input {
+  display: none;
+}
 </style>

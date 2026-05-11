@@ -22,11 +22,12 @@ logger = logging.getLogger(__name__)
 class Task:
     """任务对象"""
 
-    def __init__(self, task_id: str, theme: str, style: str, length: int, voice_type: Optional[str] = None, name: Optional[str] = None):
+    def __init__(self, task_id: str, theme: str, style: str, length: int, voice_type: Optional[str] = None, name: Optional[str] = None, ratio: str = "16:9"):
         self.task_id = task_id
         self.theme = theme
         self.name = name or theme[:20]
         self.style = style
+        self.ratio = ratio or "16:9"
         self.length = length
         self.voice_type = voice_type
         self.status = TaskStatus.PENDING
@@ -142,6 +143,7 @@ class Task:
         return TaskResponse(
             task_id=self.task_id,
             status=self.status,
+            voice_type=self.voice_type,
             progress=progress if self.status in [TaskStatus.PENDING, TaskStatus.PROCESSING] else None,
             result=self.result,
             extract_path=self.extract_path,
@@ -156,22 +158,24 @@ class TaskManager:
         self.tasks: Dict[str, Task] = {}
         self.lock = Lock()
 
-    def create_task(self, theme: str, style: str, length: int, voice_type: Optional[str] = None, name: Optional[str] = None) -> str:
+    def create_task(self, theme: str, style: str, length: int, voice_type: Optional[str] = None, name: Optional[str] = None, ratio: str = "16:9") -> str:
         """创建新任务"""
         task_id = uuid.uuid4().hex
-        task = Task(task_id, theme, style, length, voice_type, name)
+        task = Task(task_id, theme, style, length, voice_type, name, ratio)
 
         with self.lock:
             self.tasks[task_id] = task
 
-        mysql_client.create_task(task_id, theme, style, length, name)
+        mysql_client.create_task(task_id, theme, style, length, name, ratio, voice_type)
 
         # 缓存到 Redis
         task_data = {
             "task_id": task_id,
             "theme": theme,
             "style": style,
+            "ratio": ratio,
             "length": length,
+            "voice_type": voice_type,
             "status": "pending",
             "created_at": task.created_at,
         }
@@ -213,7 +217,14 @@ class TaskManager:
     def _rebuild_task_from_cache(self, data: dict) -> Optional[Task]:
         """从缓存数据重建 Task 对象"""
         try:
-            task = Task(data["task_id"], data["theme"], data["style"], data["length"])
+            task = Task(
+                data["task_id"],
+                data["theme"],
+                data["style"],
+                data["length"],
+                voice_type=data.get("voice_type"),
+                ratio=data.get("ratio", "16:9"),
+            )
             task.status = TaskStatus(data["status"])
             task.created_at = data["created_at"]
             if "error" in data:
@@ -242,7 +253,14 @@ class TaskManager:
     def _rebuild_task_from_db(self, data: dict) -> Optional[Task]:
         """从数据库数据重建 Task 对象"""
         try:
-            task = Task(data["task_id"], data["theme"], data["style"], data["length"])
+            task = Task(
+                data["task_id"],
+                data["theme"],
+                data["style"],
+                data["length"],
+                voice_type=data.get("voice_type"),
+                ratio=data.get("ratio", "16:9"),
+            )
             task.status = TaskStatus(data["status"])
             task.created_at = data["created_at"].isoformat() if hasattr(data["created_at"], "isoformat") else str(data["created_at"])
             task.current_step = data.get("current_step", "pending")
@@ -283,7 +301,9 @@ class TaskManager:
             "task_id": task.task_id,
             "theme": task.theme,
             "style": task.style,
+            "ratio": task.ratio,
             "length": task.length,
+            "voice_type": task.voice_type,
             "status": task.status,
             "created_at": task.created_at,
             "error": task.error,
@@ -350,6 +370,15 @@ class TaskManager:
             task.extract_path = extract_path
             mysql_client.update_extract_path(task_id, extract_path)
             redis_client.cache_task(task_id, self._task_to_dict(task))
+
+    def delete_task(self, task_id: str) -> bool:
+        """删除任务及其所有关联数据"""
+        with self.lock:
+            self.tasks.pop(task_id, None)
+        redis_client.delete_task(task_id)
+        mysql_client.delete_task(task_id)
+        logger.info(f"任务已删除: {task_id}")
+        return True
 
 
 # 全局任务管理器实例

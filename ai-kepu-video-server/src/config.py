@@ -7,6 +7,26 @@ from copy import deepcopy
 from pathlib import Path
 
 
+def _load_local_env() -> None:
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    if not env_path.exists():
+        return
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+        return
+    load_dotenv(env_path)
+
+
+_load_local_env()
+
+
 def _env(name: str, default: str = "") -> str:
     return os.getenv(name, default)
 
@@ -18,14 +38,29 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _clamp_int(value, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(maximum, parsed))
+
+
 class Config:
     """配置类 - 默认配置 + data/config.json 运行时覆盖"""
 
+    BASE_DIR: Path = Path(__file__).resolve().parent.parent
+
     # LLM 配置。真实 key 请写入 .env、环境变量，或通过前端“模型配置”页保存到 data/config.json。
+    LLM_API_KEY: str = _env("LLM_API_KEY", "")
+    LLM_BASE_URL: str = _env("LLM_BASE_URL", "")
+    LLM_MODEL: str = _env("LLM_MODEL", "")
+    LLM_PROTOCOL: str = _env("LLM_PROTOCOL", "openai")
+
+    # 旧版 Anthropic 命名仍保留为回退，避免已有部署升级后配置失效。
     ANTHROPIC_API_KEY: str = _env("ANTHROPIC_API_KEY", _env("ANTHROPIC_AUTH_TOKEN", ""))
     ANTHROPIC_BASE_URL: str = _env("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
     ANTHROPIC_MODEL: str = _env("ANTHROPIC_MODEL", "claude-sonnet-4-5")
-    LLM_PROTOCOL: str = _env("LLM_PROTOCOL", "anthropic")
 
     # 豆包 TTS 配置
     DOUBAO_TTS_API_URL: str = _env("DOUBAO_TTS_API_URL", "https://openspeech.bytedance.com/api/v1/tts")
@@ -63,15 +98,16 @@ class Config:
     # 日志配置
     LOG_LEVEL: str = _env("LOG_LEVEL", "DEBUG")
 
-    CONFIG_FILE: Path = Path("data/config.json")
+    CONFIG_FILE: Path = BASE_DIR / "data" / "config.json"
+    LEGACY_CONFIG_FILE: Path = Path("data/config.json")
 
     @classmethod
     def default_model_config(cls) -> dict:
         return {
             "llm": {
-                "base_url": cls.ANTHROPIC_BASE_URL,
-                "api_key": cls.ANTHROPIC_API_KEY,
-                "model": cls.ANTHROPIC_MODEL,
+                "base_url": cls.LLM_BASE_URL or cls.ANTHROPIC_BASE_URL,
+                "api_key": cls.LLM_API_KEY or cls.ANTHROPIC_API_KEY,
+                "model": cls.LLM_MODEL or cls.ANTHROPIC_MODEL,
                 "protocol": cls.LLM_PROTOCOL,
             },
             "image": {
@@ -87,27 +123,35 @@ class Config:
                 "cluster": cls.DOUBAO_TTS_CLUSTER,
                 "default_voice": cls.DOUBAO_TTS_DEFAULT_VOICE,
             },
+            "generation": {
+                "tts_concurrency": _clamp_int(_env("TTS_CONCURRENCY", "1"), 1, 1, 8),
+                "image_concurrency": _clamp_int(_env("IMAGE_CONCURRENCY", "1"), 1, 1, 8),
+            },
         }
 
     @classmethod
     def load_model_config(cls) -> dict:
         config = deepcopy(cls.default_model_config())
-        if not cls.CONFIG_FILE.exists():
+        config_file = cls._resolve_config_file()
+        if not config_file.exists():
+            cls._normalize_model_config(config)
             return config
 
         try:
-            with cls.CONFIG_FILE.open("r", encoding="utf-8") as f:
+            with config_file.open("r", encoding="utf-8") as f:
                 overrides = json.load(f)
         except Exception:
+            cls._normalize_model_config(config)
             return config
 
-        for section in ("llm", "image", "tts"):
+        for section in ("llm", "image", "tts", "generation"):
             if isinstance(overrides.get(section), dict):
                 config[section].update({
                     key: value
                     for key, value in overrides[section].items()
                     if value is not None
                 })
+        cls._normalize_model_config(config)
         return config
 
     @classmethod
@@ -115,18 +159,79 @@ class Config:
         current = cls.load_model_config()
         incoming = config or {}
 
-        for section in ("llm", "image", "tts"):
+        for section in ("llm", "image", "tts", "generation"):
             if isinstance(incoming.get(section), dict):
                 current[section].update({
                     key: value
                     for key, value in incoming[section].items()
                     if value is not None
                 })
+        cls._normalize_model_config(current)
 
         cls.CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
         with cls.CONFIG_FILE.open("w", encoding="utf-8") as f:
             json.dump(current, f, ensure_ascii=False, indent=2)
         return current
+
+    @classmethod
+    def _normalize_generation_config(cls, config: dict) -> None:
+        generation = config.setdefault("generation", {})
+        generation["tts_concurrency"] = _clamp_int(
+            generation.get("tts_concurrency"), 1, 1, 8
+        )
+        generation["image_concurrency"] = _clamp_int(
+            generation.get("image_concurrency"), 1, 1, 8
+        )
+
+    @classmethod
+    def _normalize_tts_config(cls, config: dict) -> None:
+        tts = config.setdefault("tts", {})
+        tts["api_url"] = (
+            tts.get("api_url")
+            or tts.get("url")
+            or tts.get("base_url")
+            or cls.DOUBAO_TTS_API_URL
+        )
+        tts["appid"] = (
+            tts.get("appid")
+            or tts.get("app_id")
+            or tts.get("appId")
+            or cls.DOUBAO_TTS_APPID
+        )
+        tts["token"] = (
+            tts.get("token")
+            or tts.get("access_token")
+            or tts.get("accessToken")
+            or tts.get("api_key")
+            or cls.DOUBAO_TTS_TOKEN
+        )
+        tts["cluster"] = tts.get("cluster") or cls.DOUBAO_TTS_CLUSTER
+        tts["default_voice"] = (
+            tts.get("default_voice")
+            or tts.get("voice_type")
+            or tts.get("voice")
+            or cls.DOUBAO_TTS_DEFAULT_VOICE
+        )
+
+    @classmethod
+    def _normalize_model_config(cls, config: dict) -> None:
+        cls._normalize_tts_config(config)
+        cls._normalize_generation_config(config)
+
+    @classmethod
+    def _resolve_config_file(cls) -> Path:
+        if cls.CONFIG_FILE.exists():
+            return cls.CONFIG_FILE
+
+        legacy = cls.LEGACY_CONFIG_FILE
+        try:
+            legacy = legacy.resolve()
+        except Exception:
+            pass
+
+        if legacy != cls.CONFIG_FILE and legacy.exists():
+            return legacy
+        return cls.CONFIG_FILE
 
     @classmethod
     def llm_config(cls) -> dict:
@@ -139,3 +244,7 @@ class Config:
     @classmethod
     def tts_config(cls) -> dict:
         return cls.load_model_config()["tts"]
+
+    @classmethod
+    def generation_config(cls) -> dict:
+        return cls.load_model_config()["generation"]

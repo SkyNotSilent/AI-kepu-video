@@ -14,12 +14,21 @@ logger = logging.getLogger(__name__)
 
 
 def COSUploader(**kwargs):
-    """工厂函数：根据环境自动选择上传器"""
-    if os.environ.get("USE_REMOTE_DB") == "1":
-        return _COSUploader(**kwargs)
-    else:
-        from src.utils.local_uploader import LocalUploader
-        return LocalUploader(**kwargs)
+    """工厂函数：优先远端 COS，缺少配置时自动回退本地存储。"""
+    use_remote_storage = os.environ.get("USE_REMOTE_DB") == "1" and all([
+        kwargs.get("secret_id") or Config.COS_SECRET_ID,
+        kwargs.get("secret_key") or Config.COS_SECRET_KEY,
+        kwargs.get("bucket") or Config.COS_BUCKET,
+    ])
+
+    if use_remote_storage:
+        try:
+            return _COSUploader(**kwargs)
+        except Exception as e:
+            logger.warning(f"COS 初始化失败，回退到本地存储: {e}")
+
+    from src.utils.local_uploader import LocalUploader
+    return LocalUploader(**kwargs)
 
 
 class _COSUploader:

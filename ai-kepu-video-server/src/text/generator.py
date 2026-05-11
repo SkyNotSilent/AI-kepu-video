@@ -23,8 +23,10 @@ class ArticleGenerator:
         self.llm_config = Config.llm_config()
         self.protocol = (self.llm_config.get("protocol") or "anthropic").lower()
         self.api_key = self.llm_config.get("api_key") or ""
-        self.model = self.llm_config.get("model") or Config.ANTHROPIC_MODEL
-        self.api_url = self._build_api_url(self.llm_config.get("base_url") or Config.ANTHROPIC_BASE_URL)
+        self.model = self.llm_config.get("model") or Config.LLM_MODEL or Config.ANTHROPIC_MODEL
+        self.api_url = self._build_api_url(
+            self.llm_config.get("base_url") or Config.LLM_BASE_URL or Config.ANTHROPIC_BASE_URL
+        )
 
         if not self.api_key:
             raise ValueError("LLM API Key 未配置")
