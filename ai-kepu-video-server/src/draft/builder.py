@@ -230,7 +230,7 @@ class DraftBuilder:
             t_range = Timerange(cursor_us, segment_dur)
 
             # ── 视频/图片轨道 ─────────────────────────────────────────────
-            if Path(img_path).exists():
+            if img_path and Path(img_path).exists():
                 vm = VideoMaterial(img_path)
                 if vm.material_type == "photo":
                     vs = VideoSegment(vm, t_range)

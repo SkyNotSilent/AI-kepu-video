@@ -530,7 +530,7 @@ class SQLiteClient:
     def save_task_asset(self, task_id: str, asset_type: str, source: str, path: str = None,
                         url: str = None, segment_index: int = None, label: str = None,
                         prompt: str = None, text: str = None, voice_type: str = None,
-                        metadata_json: str = None) -> Dict:
+                        metadata_json: str = None, status: str = "completed", error_message: str = None) -> Dict:
         if not self._initialized:
             self._init_db()
         if not self._initialized:
@@ -549,9 +549,9 @@ class SQLiteClient:
                 if existing:
                     cur.execute(
                         """UPDATE task_assets SET segment_index=?, source=?, url=?, label=?, prompt=?, text=?,
-                           voice_type=?, metadata_json=?, updated_at=datetime('now','localtime')
+                           voice_type=?, metadata_json=?, status=?, error_message=?, updated_at=datetime('now','localtime')
                            WHERE asset_id=?""",
-                        (segment_index, source, url, label, prompt, text, voice_type, metadata_json, existing["asset_id"])
+                        (segment_index, source, url, label, prompt, text, voice_type, metadata_json, status, error_message, existing["asset_id"])
                     )
                     conn.commit()
                     cur.execute("SELECT * FROM task_assets WHERE asset_id=?", (existing["asset_id"],))
@@ -562,9 +562,9 @@ class SQLiteClient:
             asset_id = uuid.uuid4().hex
             cur.execute(
                 """INSERT INTO task_assets
-                   (asset_id, task_id, segment_index, asset_type, source, path, url, label, prompt, text, voice_type, metadata_json)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (asset_id, task_id, segment_index, asset_type, source, path, url, label, prompt, text, voice_type, metadata_json)
+                   (asset_id, task_id, segment_index, asset_type, source, path, url, label, prompt, text, voice_type, metadata_json, status, error_message)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (asset_id, task_id, segment_index, asset_type, source, path, url, label, prompt, text, voice_type, metadata_json, status, error_message)
             )
             conn.commit()
             cur.execute("SELECT * FROM task_assets WHERE asset_id=?", (asset_id,))

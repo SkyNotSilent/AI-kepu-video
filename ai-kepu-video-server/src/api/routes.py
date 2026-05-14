@@ -315,13 +315,23 @@ def _normalize_draft_files_for_location(draft_dir: Path, draft_root: str, draft_
 def _infer_ratio_from_content(content: dict) -> str:
     canvas = content.get("canvas_config") or {}
     ratio = canvas.get("ratio")
-    if ratio in {"16:9", "9:16", "1:1"}:
+    if ratio in {"16:9", "9:16", "3:4"}:
         return ratio
     width = canvas.get("width") or 1920
     height = canvas.get("height") or 1080
-    if width == height:
-        return "1:1"
-    return "16:9" if width > height else "9:16"
+
+    # 计算宽高比
+    ratio_value = width / height if height > 0 else 1.0
+
+    # 判断最接近的比例
+    if abs(ratio_value - 0.75) < 0.1:  # 3:4 (0.75)
+        return "3:4"
+    elif abs(ratio_value - 1.0) < 0.1:  # 接近方形，归为3:4
+        return "3:4"
+    elif ratio_value > 1.5:  # 16:9 (1.778)
+        return "16:9"
+    else:  # 9:16 (0.5625)
+        return "9:16"
 
 
 def _resolve_material_source(draft_dir: Path, raw_path: str) -> Path:

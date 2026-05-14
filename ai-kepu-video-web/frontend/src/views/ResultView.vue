@@ -1,12 +1,8 @@
-/**
- * 完成页 - 显示结果 + 下载
- */
 <template>
   <div class="result-view">
     <div v-loading="loading" element-loading-text="加载中..." class="result-container">
       <div v-if="!loading && taskData" class="layout">
-      <!-- 左侧成功信息 -->
-      <div class="info-side">
+        <div class="info-side">
         <div class="info-content">
           <div class="success-icon">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -43,8 +39,7 @@
         </div>
       </div>
 
-      <!-- 右侧下载区 -->
-      <div class="download-side">
+        <div class="download-side">
         <div class="download-content">
           <h3 class="dl-title">文件下载</h3>
 
@@ -86,12 +81,13 @@
             </div>
           </div>
         </div>
+        </div>
       </div>
-    </div>
 
-    <div v-if="!loading && !taskData" class="error-container">
-      <el-empty description="任务不存在" />
-      <button class="nav-btn" @click="handleBackHome">返回首页</button>
+      <div v-if="!loading && !taskData" class="error-container">
+        <el-empty description="任务不存在" />
+        <button class="nav-btn" @click="handleBackHome">返回首页</button>
+      </div>
     </div>
   </div>
 </template>
@@ -188,18 +184,22 @@ const handleBackToExport = () => { router.push(`/export/${taskId}`) }
 
 .nav-actions { display: flex; flex-direction: column; gap: 8px; }
 .nav-btn {
-  padding: 9px 0;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border);
-  background: var(--color-card);
-  color: var(--color-text-secondary);
+  padding: 10px 0;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-primary);
+  background: transparent;
+  color: var(--color-primary);
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 400;
+  letter-spacing: -0.016em;
   cursor: pointer;
-  transition: border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s;
+  transition: all var(--duration-normal) var(--ease-out);
   text-align: center;
 }
-.nav-btn:hover { border-color: var(--color-primary); color: var(--color-primary); box-shadow: var(--shadow-xs); transform: translateY(-1px); }
+.nav-btn:hover {
+  background: var(--color-primary-bg);
+  box-shadow: var(--shadow-sm);
+}
 
 /* 右侧 */
 .download-side {
@@ -219,33 +219,41 @@ const handleBackToExport = () => { router.push(`/export/${taskId}`) }
 
 .text-field {
   width: 100%;
-  padding: 10px 12px;
+  padding: 12px 14px;
   font-size: 14px;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: var(--color-bg-secondary);
   color: var(--color-text);
   outline: none;
   font-family: inherit;
   box-sizing: border-box;
-  transition: border-color 0.15s;
+  transition: all var(--duration-fast) var(--ease-out);
 }
-.text-field:focus { border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-bg); }
+.text-field:focus {
+  border-color: var(--color-accent);
+  background: #fff;
+  box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.1);
+}
 .field-hint { font-size: 12px; color: var(--color-text-placeholder); margin-top: 6px; }
 
 .download-card {
   display: flex;
   align-items: center;
-  padding: 14px 16px;
+  padding: 16px 18px;
   background: var(--color-card);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-lg);
   margin-bottom: 10px;
-  border: 1px solid var(--color-border);
+  border: none;
+  box-shadow: var(--shadow-sm);
   cursor: pointer;
-  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+  transition: all var(--duration-normal) var(--ease-out);
 }
-.download-card:hover:not(.disabled) { border-color: var(--color-primary); box-shadow: var(--shadow-md); transform: translateY(-2px); }
-.download-card.disabled { opacity: 0.4; cursor: not-allowed; }
+.download-card:hover:not(.disabled) {
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-4px);
+}
+.download-card.disabled { opacity: 0.5; cursor: not-allowed; }
 
 .dl-icon {
   width: 40px;
@@ -258,8 +266,8 @@ const handleBackToExport = () => { router.push(`/export/${taskId}`) }
   margin-right: 14px;
   color: #fff;
 }
-.dl-icon.draft { background: linear-gradient(135deg, var(--color-primary), #60a5fa); }
-.dl-icon.mp4 { background: linear-gradient(135deg, #1d2129, #4e5969); }
+.dl-icon.draft { background: linear-gradient(135deg, var(--color-primary), #1d1d1f); }
+.dl-icon.mp4 { background: linear-gradient(135deg, #1d1d1f, #6e6e73); }
 
 .dl-info { flex: 1; min-width: 0; }
 .dl-name { font-size: 14px; font-weight: 600; color: var(--color-text); margin-bottom: 2px; }
@@ -270,17 +278,21 @@ const handleBackToExport = () => { router.push(`/export/${taskId}`) }
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 14px;
+  padding: 14px 16px;
   background: var(--color-card);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   margin-bottom: 6px;
-  border: 1px solid var(--color-border);
+  border: none;
+  box-shadow: var(--shadow-xs);
   cursor: pointer;
   font-size: 14px;
   color: var(--color-text-secondary);
-  transition: border-color 0.15s;
+  transition: all var(--duration-normal) var(--ease-out);
 }
-.oss-row:hover { border-color: var(--color-primary); }
+.oss-row:hover {
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
 .oss-copy { font-size: 13px; color: var(--color-primary); font-weight: 500; }
 
 @media (max-width: 820px) {

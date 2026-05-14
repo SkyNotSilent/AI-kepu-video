@@ -30,7 +30,7 @@ class CreateTaskRequest(BaseModel):
     name: Optional[str] = Field(None, max_length=100, description="项目名称")
     input_mode: str = Field(default="script", description="输入模式：script=写作模式，theme=主题模式")
     style: str = Field(default="温暖感人", description="文章风格")
-    ratio: str = Field(default="16:9", description="视频比例：16:9/9:16/1:1")
+    ratio: str = Field(default="16:9", description="视频比例：16:9/9:16/3:4")
     length: int = Field(default=300, ge=0, le=2000, description="主题模式下的目标脚本字数；0 表示自动")
     voice_type: Optional[str] = Field(None, description="TTS 音色 ID")
 

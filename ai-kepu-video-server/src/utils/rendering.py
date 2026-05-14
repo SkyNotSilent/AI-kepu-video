@@ -6,7 +6,7 @@ from typing import Dict
 RATIO_CANVASES: Dict[str, Dict[str, int]] = {
     "16:9": {"width": 1920, "height": 1080, "fps": 30},
     "9:16": {"width": 1080, "height": 1920, "fps": 30},
-    "1:1": {"width": 1080, "height": 1080, "fps": 30},
+    "3:4": {"width": 1080, "height": 1440, "fps": 30},
 }
 
 SUBTITLE_PRESETS: Dict[str, Dict[str, float]] = {
@@ -24,11 +24,11 @@ SUBTITLE_PRESETS: Dict[str, Dict[str, float]] = {
         "draft_base_size": 8.0,
         "draft_border_width": 40.0,
     },
-    "1:1": {
-        "font_size_ratio": 0.05,
-        "y_ratio": 0.9,
-        "draft_transform_y": -0.82,
-        "draft_base_size": 7.5,
+    "3:4": {
+        "font_size_ratio": 0.042,
+        "y_ratio": 0.91,
+        "draft_transform_y": -0.83,
+        "draft_base_size": 7.6,
         "draft_border_width": 40.0,
     },
 }
@@ -46,9 +46,18 @@ def canvas_for_ratio(ratio: str = None) -> Dict[str, int]:
 
 
 def ratio_for_canvas(width: int, height: int) -> str:
-    if width == height:
-        return "1:1"
-    return "16:9" if width > height else "9:16"
+    # 计算宽高比
+    ratio = width / height if height > 0 else 1.0
+
+    # 判断最接近的比例
+    if abs(ratio - 0.75) < 0.1:  # 3:4 (0.75)
+        return "3:4"
+    elif abs(ratio - 1.0) < 0.1:  # 接近方形，归为3:4
+        return "3:4"
+    elif ratio > 1.5:  # 16:9 (1.778)
+        return "16:9"
+    else:  # 9:16 (0.5625)
+        return "9:16"
 
 
 def subtitle_preset_for_ratio(ratio: str = None) -> Dict[str, float]:

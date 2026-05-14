@@ -1,6 +1,6 @@
 # InsightCut
 
-**All in one, but not a canvas.**
+**All in one, 但不是画布！**
 
 InsightCut 是面向 AI 解说视频的一站式创作工作台：从一个观点、一段文案或一个选题出发，自动完成脚本改写、分镜拆解、AI 图片、TTS 配音、字幕、MP4 成片和剪映草稿导出。
 

@@ -141,7 +141,7 @@
 
             <div class="edit-actions">
               <button type="button" class="secondary-btn" @click="saveCurrentText">保存文案</button>
-              <button type="button" class="primary-btn" @click="onRegenerateImage(currentIndex)">重新生成图片</button>
+              <button type="button" class="primary-btn" @click="onRegenerateImage(currentIndex)">重生图片</button>
               <button type="button" class="primary-btn" @click="onRegenerateAudio(currentIndex)">重配音</button>
             </div>
           </div>
@@ -157,28 +157,37 @@
             <div v-loading="assetsLoading" element-loading-text="加载中..." class="asset-container">
               <div v-if="!assetsLoading && filteredAssets.length === 0" class="asset-empty">暂无素材</div>
               <div v-else-if="!assetsLoading" class="asset-list">
-              <article v-for="asset in filteredAssets" :key="asset.asset_id" class="asset-item" :class="{ missing: !asset.has_file }">
-                <img v-if="asset.asset_type === 'image' && asset.has_file" :src="asset.url || asset.file_url" :alt="asset.label" />
-                <audio v-else-if="asset.asset_type === 'audio' && asset.has_file" :src="asset.url || asset.file_url" controls></audio>
-                <div v-else-if="asset.asset_type === 'subtitle'" class="subtitle-file">SRT</div>
-                <div v-else class="missing-file">缺失</div>
-                <div class="asset-info">
-                  <strong>{{ asset.label }}</strong>
-                  <span>{{ assetMeta(asset) }}</span>
-                </div>
-                <div class="asset-actions">
-                  <button v-if="asset.asset_type === 'image'" type="button" :disabled="!asset.has_file" @click="onSelectImageAsset(asset)">应用</button>
-                  <button type="button" :disabled="!asset.has_file" @click="downloadAsset(asset)">下载</button>
-                </div>
-              </article>
+                <article v-for="asset in filteredAssets" :key="asset.asset_id" class="asset-item" :class="{ missing: !asset.has_file }">
+                  <img v-if="asset.asset_type === 'image' && asset.has_file" :src="asset.url || asset.file_url" :alt="asset.label" />
+                  <audio v-else-if="asset.asset_type === 'audio' && asset.has_file" :src="asset.url || asset.file_url" controls></audio>
+                  <div v-else-if="asset.asset_type === 'subtitle'" class="subtitle-file">SRT</div>
+                  <div v-else class="missing-file">缺失</div>
+                  <div class="asset-info">
+                    <strong>{{ formatAssetLabel(asset) }}</strong>
+                    <span>{{ assetMeta(asset) }}</span>
+                  </div>
+                  <div class="asset-actions">
+                    <button v-if="asset.asset_type === 'image'" type="button" :disabled="!asset.has_file" @click="onSelectImageAsset(asset)">应用</button>
+                    <button type="button" :disabled="!asset.has_file" @click="downloadAsset(asset)">下载</button>
+                  </div>
+                </article>
+              </div>
             </div>
           </div>
 
           <div v-else class="mine-body">
-            <label class="field">
+            <div class="field">
               <span>剪映草稿默认位置</span>
-              <input v-model.trim="mineSettings.extractPath" class="mine-input" placeholder="D:\\JianyingPro Drafts" @input="saveMineSettings" />
-            </label>
+              <div class="mine-input-group">
+                <input v-model.trim="mineSettings.extractPath" class="mine-input" placeholder="D:\\JianyingPro Drafts" @input="saveMineSettings" />
+                <button type="button" class="folder-select-btn" :disabled="folderPicking" @click="chooseDraftFolder">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                  </svg>
+                  {{ folderPicking ? '选择中...' : '选择' }}
+                </button>
+              </div>
+            </div>
 
             <div class="field">
               <span>默认导出模式</span>
@@ -211,6 +220,7 @@ import {
   regenerateAudio,
   regenerateImage,
   renderPreview,
+  selectDraftFolder,
   selectSegmentImage,
   updateSegment,
   uploadImage,
@@ -240,6 +250,7 @@ const mineSettings = ref({
   extractPath: '',
   defaultExport: 'mp4',
 })
+const folderPicking = ref(false)
 const isPlaying = ref(false)
 const playbackMode = ref('sequence')
 const playbackProgress = ref(0)
@@ -285,9 +296,79 @@ const currentImageAssets = computed(() => {
   })
 })
 const filteredAssets = computed(() => {
-  if (assetFilter.value === 'all') return assets.value
-  if (assetFilter.value === 'upload') return assets.value.filter(asset => asset.source === 'upload')
-  return assets.value.filter(asset => asset.asset_type === assetFilter.value)
+  let filtered = []
+
+  if (assetFilter.value === 'all') {
+    // 全部：每个分镜显示一个图片 + 一个音频
+    const result = []
+    segments.value.forEach((segment, index) => {
+      // 获取该分镜的图片（优先当前使用的）
+      const imageAsset = assets.value.find(asset =>
+        asset.asset_type === 'image' &&
+        Number(asset.segment_index) === index &&
+        asset.has_file &&
+        (asset.path === segment.image_path || asset.url === segment.image_url || asset.file_url === segment.image_url)
+      ) || assets.value.find(asset =>
+        asset.asset_type === 'image' &&
+        Number(asset.segment_index) === index &&
+        asset.has_file
+      )
+
+      // 获取该分镜的音频（优先当前使用的）
+      const audioAsset = assets.value.find(asset =>
+        asset.asset_type === 'audio' &&
+        Number(asset.segment_index) === index &&
+        asset.has_file &&
+        (asset.path === segment.audio_path || asset.url === segment.audio_url || asset.file_url === segment.audio_url)
+      ) || assets.value.find(asset =>
+        asset.asset_type === 'audio' &&
+        Number(asset.segment_index) === index &&
+        asset.has_file
+      )
+
+      if (imageAsset) result.push(imageAsset)
+      if (audioAsset) result.push(audioAsset)
+    })
+    filtered = result
+  } else if (assetFilter.value === 'image') {
+    // 图片：每个分镜只显示一个图片（当前使用的）
+    const result = []
+    segments.value.forEach((segment, index) => {
+      const imageAsset = assets.value.find(asset =>
+        asset.asset_type === 'image' &&
+        Number(asset.segment_index) === index &&
+        asset.has_file &&
+        (asset.path === segment.image_path || asset.url === segment.image_url || asset.file_url === segment.image_url)
+      ) || assets.value.find(asset =>
+        asset.asset_type === 'image' &&
+        Number(asset.segment_index) === index &&
+        asset.has_file
+      )
+      if (imageAsset) result.push(imageAsset)
+    })
+    filtered = result
+  } else if (assetFilter.value === 'upload') {
+    filtered = assets.value.filter(asset => asset.source === 'upload')
+    // 按 segment_index 排序
+    filtered.sort((a, b) => {
+      const indexA = Number(a.segment_index ?? -1)
+      const indexB = Number(b.segment_index ?? -1)
+      if (indexA !== indexB) return indexA - indexB
+      return (a.asset_id || '').localeCompare(b.asset_id || '')
+    })
+  } else {
+    // 音频、字幕等其他类型
+    filtered = assets.value.filter(asset => asset.asset_type === assetFilter.value)
+    // 按 segment_index 排序
+    filtered.sort((a, b) => {
+      const indexA = Number(a.segment_index ?? -1)
+      const indexB = Number(b.segment_index ?? -1)
+      if (indexA !== indexB) return indexA - indexB
+      return (a.asset_id || '').localeCompare(b.asset_id || '')
+    })
+  }
+
+  return filtered
 })
 const previewSubtitleText = computed(() => cleanSubtitleText(textDraft.value || currentSegment.value?.text || ''))
 const currentAnimation = computed(() => renderConfig.value.animations?.[currentIndex.value] || { anim_type: 0, scale_end: 1.08 })
@@ -318,11 +399,8 @@ const renderCanvasStyle = computed(() => {
   const canvas = renderConfig.value.canvas || {}
   const width = Number(canvas.width || 1920)
   const height = Number(canvas.height || 1080)
-  const aspect = width / height
   return {
     aspectRatio: `${width} / ${height}`,
-    width: aspect >= 1 ? '100%' : 'auto',
-    height: aspect >= 1 ? 'auto' : '100%',
   }
 })
 const canvasAspectRatio = computed(() => {
@@ -712,9 +790,28 @@ function switchAssetFilter(filter) {
 
 function assetMeta(asset) {
   if (!asset.has_file) return '素材文件缺失，请重新生成'
-  if (asset.asset_type === 'image') return asset.prompt ? asset.prompt.slice(0, 42) : imageSourceLabel(asset.source)
-  if (asset.asset_type === 'audio') return voiceName(asset.voice_type) || imageSourceLabel(asset.source)
+
+  if (asset.asset_type === 'image') {
+    return asset.prompt ? asset.prompt.slice(0, 42) : imageSourceLabel(asset.source)
+  }
+  if (asset.asset_type === 'audio') {
+    return voiceName(asset.voice_type) || imageSourceLabel(asset.source)
+  }
   return '项目 SRT 字幕文件'
+}
+
+function formatAssetLabel(asset) {
+  // 根据分镜编号和类型生成标签
+  if (asset.segment_index !== undefined) {
+    const segmentNum = Number(asset.segment_index) + 1
+    if (asset.asset_type === 'image') {
+      return `分镜${segmentNum} - 图片`
+    }
+    if (asset.asset_type === 'audio') {
+      return `分镜${segmentNum} - 音频`
+    }
+  }
+  return asset.label || '素材'
 }
 
 function imageSourceLabel(source) {
@@ -756,6 +853,26 @@ function setDefaultExport(target) {
   mineSettings.value.defaultExport = target
   saveMineSettings()
   ElMessage.success('默认导出模式已保存')
+}
+
+async function chooseDraftFolder() {
+  try {
+    folderPicking.value = true
+    ElMessage.info('请在弹出的窗口里选择剪映草稿目录')
+    const result = await selectDraftFolder(taskId)
+    mineSettings.value.extractPath = result.path || ''
+    saveMineSettings()
+    if (result.warnings?.length) {
+      ElMessage.warning(result.warnings[0])
+    } else {
+      ElMessage.success('已选择剪映草稿目录')
+    }
+  } catch (error) {
+    console.error('选择剪映草稿目录失败:', error)
+    ElMessage.error(error?.response?.data?.detail || '未选择文件夹')
+  } finally {
+    folderPicking.value = false
+  }
 }
 
 function onCurrentImageSelected(event) {
@@ -975,14 +1092,20 @@ function previewOpacity(progress) {
 
 .workbench {
   height: calc(100vh - 64px);
-  display: grid;
-  grid-template-columns: 280px minmax(0, 1fr) 300px;
-  gap: 12px;
   padding: 12px 16px;
   overflow: hidden;
 }
 
-.loading-state,
+.workbench-content {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr) 300px;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.workbench-content > .el-empty,
 .empty-state {
   grid-column: 1 / -1;
   display: grid;
@@ -995,9 +1118,16 @@ function previewOpacity(progress) {
 .edit-panel {
   min-height: 0;
   background: var(--color-card);
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  border: none;
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-md);
+  transition: all var(--duration-normal) var(--ease-out);
+}
+
+.storyboard-panel:hover,
+.preview-panel:hover,
+.edit-panel:hover {
+  box-shadow: var(--shadow-lg);
 }
 
 .storyboard-panel,
@@ -1008,21 +1138,25 @@ function previewOpacity(progress) {
 }
 
 .panel-title {
-  height: 50px;
+  height: 56px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 14px;
-  border-bottom: 1px solid var(--color-border);
+  padding: 0 20px;
+  border-bottom: 1px solid var(--color-divider);
 }
 
 .panel-title h2 {
-  font-size: 15px;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.022em;
+  color: var(--color-text);
 }
 
 .panel-title span {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--color-text-tertiary);
+  letter-spacing: -0.016em;
 }
 
 .segment-list {
@@ -1055,12 +1189,14 @@ function previewOpacity(progress) {
 .render-canvas {
   position: relative;
   width: 100%;
+  height: 100%;
   max-width: 100%;
   max-height: 100%;
   background: #000;
   overflow: hidden;
   container-type: size;
   box-shadow: 0 12px 36px rgba(0,0,0,0.25);
+  object-fit: contain;
 }
 
 .render-canvas img {
@@ -1167,27 +1303,31 @@ function previewOpacity(progress) {
 }
 
 .play-btn {
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  border: none;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.15s;
-  color: var(--color-text);
+  transition: all var(--duration-normal) var(--ease-out);
+  color: #ffffff;
 }
 
 .play-btn:hover {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
+  background: var(--color-primary-hover);
+  transform: scale(1.05);
+}
+
+.play-btn:active {
+  transform: scale(0.95);
 }
 
 .play-btn svg {
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
 }
 
 .play-track {
@@ -1383,8 +1523,7 @@ function previewOpacity(progress) {
   font-size: 12px;
 }
 
-.voice-select,
-.mine-input {
+.voice-select {
   width: 100%;
   min-height: 38px;
   padding: 0 10px;
@@ -1396,11 +1535,61 @@ function previewOpacity(progress) {
   font-size: 12px;
 }
 
-.voice-select:focus,
-.mine-input:focus {
-  border-color: var(--color-primary);
+.voice-select:focus {
+  border-color: var(--color-accent);
   background: #fff;
-  box-shadow: 0 0 0 3px var(--accent-glow);
+  box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.1);
+}
+
+.mine-input-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.mine-input {
+  flex: 1;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  outline: none;
+}
+
+.mine-input:focus {
+  border-color: var(--color-accent);
+  background: #fff;
+  box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.1);
+}
+
+.folder-select-btn {
+  height: 38px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.folder-select-btn:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: var(--color-primary-bg);
+}
+
+.folder-select-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .field {
@@ -1429,9 +1618,9 @@ function previewOpacity(progress) {
 }
 
 .field textarea:focus {
-  border-color: var(--color-primary);
+  border-color: var(--color-accent);
   background: #fff;
-  box-shadow: 0 0 0 3px var(--accent-glow);
+  box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.1);
 }
 
 .edit-actions {
@@ -1443,38 +1632,43 @@ function previewOpacity(progress) {
 .secondary-btn {
   flex: 1;
   justify-content: center;
-  min-height: 38px;
-  border-radius: 8px;
-  font-size: 12px;
-  font-weight: 500;
+  min-height: 40px;
+  border-radius: var(--radius-xl);
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: -0.016em;
   cursor: pointer;
   display: flex;
   align-items: center;
   gap: 6px;
-  transition: all 0.15s;
-  padding: 8px;
+  transition: all var(--duration-normal) var(--ease-out);
+  padding: 10px 16px;
 }
 
 .primary-btn {
   border: none;
-  background: #1d2129;
-  color: #fff;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  background: var(--color-primary);
+  color: #ffffff;
+  box-shadow: var(--shadow-sm);
 }
 
 .primary-btn:hover {
-  background: #333;
+  background: var(--color-primary-hover);
+  transform: scale(1.02);
+}
+
+.primary-btn:active {
+  transform: scale(0.98);
 }
 
 .secondary-btn {
-  border: 1px solid var(--color-border);
-  background: #fff;
-  color: var(--color-text-secondary);
+  border: 1px solid var(--color-primary);
+  background: transparent;
+  color: var(--color-primary);
 }
 
 .secondary-btn:hover {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
+  background: var(--color-primary-bg);
 }
 
 .asset-toolbar {

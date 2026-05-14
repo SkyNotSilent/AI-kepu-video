@@ -30,7 +30,39 @@
               </button>
             </div>
           </div>
-          <button type="button" class="ghost-btn" @click="router.push('/settings')">
+          <div v-if="inputMode === 'theme'" class="knob-wrapper-header">
+            <div
+              class="knob-compact"
+              @mousedown="startKnobRotate"
+              @touchstart="startKnobRotate"
+            >
+              <svg viewBox="0 0 48 48" class="knob-svg">
+                <defs>
+                  <linearGradient id="knobGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stop-color="#007AFF" />
+                    <stop offset="100%" stop-color="#5AC8FA" />
+                  </linearGradient>
+                </defs>
+                <circle cx="24" cy="24" r="20" class="knob-bg-ring" />
+                <circle
+                  cx="24"
+                  cy="24"
+                  r="20"
+                  class="knob-progress-ring"
+                  :style="{ strokeDashoffset: knobStrokeDashOffset }"
+                />
+              </svg>
+              <div class="knob-inner">
+                <span class="knob-text">{{ form.length === 0 ? '自动' : form.length }}</span>
+              </div>
+              <div class="knob-pointer" :style="{ transform: `rotate(${knobAngle}deg)` }"></div>
+            </div>
+            <div class="knob-label">
+              <span class="knob-title">生成文案字数</span>
+              <span class="knob-hint">旋转调节 · 0-2000</span>
+            </div>
+          </div>
+          <button v-else type="button" class="ghost-btn" @click="router.push('/settings')">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 6v6m9-9h-6m-6 0H3"/></svg>
             模型配置
           </button>
@@ -39,7 +71,9 @@
         <div class="script-field">
           <div class="section-head">
             <label>{{ inputMode === 'theme' ? '视频主题' : '文案内容' }}</label>
-            <span>{{ form.theme.length }}/{{ themeMaxLength }}</span>
+            <div class="head-right">
+              <span>{{ form.theme.length }}/{{ themeMaxLength }}</span>
+            </div>
           </div>
           <div class="textarea-shell">
             <div v-if="!form.theme && !themeFocused" class="value-rotator">
@@ -80,24 +114,6 @@
               @blur="themeFocused = false"
             ></textarea>
           </div>
-          <div v-if="inputMode === 'theme'" class="script-length-block">
-            <div class="section-head">
-              <label>生成字数</label>
-              <strong>{{ form.length === 0 ? '自动' : `${form.length} 字` }}</strong>
-            </div>
-            <div class="length-controls">
-              <input type="range" v-model.number="form.length" min="0" max="2000" step="50" class="slider" />
-              <input v-model.number="form.length" type="number" min="0" max="2000" step="50" class="length-input" @blur="normalizeLength" />
-            </div>
-          </div>
-        </div>
-
-        <div v-if="inputMode === 'script'" class="assistant-row">
-          <button type="button" class="assistant-btn" @click="showWritingAssistant = true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.7 5.2L19 10l-5.3 1.8L12 17l-1.7-5.2L5 10l5.3-1.8L12 3z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15z"/></svg>
-            写作助手
-          </button>
-          <span>仅 UI 占位，后续接入 AI 改写与分镜建议</span>
         </div>
       </section>
 
@@ -219,14 +235,6 @@
             </button>
           </div>
 
-          <div v-if="inputMode === 'theme'" class="range-block compact-length">
-            <div class="section-head">
-              <label>脚本字数</label>
-              <strong>{{ form.length === 0 ? '自动' : `${form.length} 字` }}</strong>
-            </div>
-            <input type="range" v-model.number="form.length" min="0" max="2000" step="50" class="slider" />
-          </div>
-
           <div class="range-block">
             <div class="section-head">
               <label>语速调节</label>
@@ -308,14 +316,6 @@
       </div>
     </main>
 
-    <van-popup v-model:show="showWritingAssistant" round class="assistant-popup">
-      <div class="popup-panel">
-        <h3>写作助手</h3>
-        <p>后续可接入主题扩写、口播润色和自动分镜建议。当前仅保留视觉占位，不调用后端接口。</p>
-        <button class="inline-primary" @click="showWritingAssistant = false">知道了</button>
-      </div>
-    </van-popup>
-
     <div v-if="showCustomVisualStyle" class="visual-style-overlay" @click.self="cancelCustomVisualStyle">
       <section class="visual-style-dialog">
         <div class="dialog-head">
@@ -392,10 +392,27 @@ const visualSource = ref('ai')
 const videoRatio = ref('16:9')
 const voiceSpeed = ref(1.0)
 const themeFocused = ref(false)
-const showWritingAssistant = ref(false)
 const uploadedImages = ref([])
 const uploadInput = ref(null)
 const dragImageIndex = ref(null)
+const lengthDisplay = ref('')
+const lengthInputFocused = ref(false)
+const knobDragging = ref(false)
+const knobStartAngle = ref(0)
+const knobStartValue = ref(0)
+const knobCenterX = ref(0)
+const knobCenterY = ref(0)
+
+const knobAngle = computed(() => {
+  const percent = form.value.length / 2000
+  return percent * 360
+})
+
+const knobStrokeDashOffset = computed(() => {
+  const circumference = 2 * Math.PI * 20
+  const percent = form.value.length / 2000
+  return circumference * (1 - percent)
+})
 
 const TEXT_STYLE_STORAGE_KEY = 'kepu_custom_text_styles'
 const VISUAL_STYLE_STORAGE_KEY = 'kepu_custom_visual_styles'
@@ -410,7 +427,7 @@ const inputModes = [
   { label: '写作模式', value: 'script' },
   { label: '主题模式', value: 'theme' },
 ]
-const videoRatios = ['16:9', '9:16', '1:1']
+const videoRatios = ['16:9', '9:16', '3:4']
 const rotatorItems = [
   { text: '一键生成视频', class: 'text-bloom', anim: 'anim-bloom' },
   { text: '导出剪映草稿', class: 'text-push', anim: 'anim-push' },
@@ -605,7 +622,93 @@ function normalizeLength() {
     form.value.length = 300
     return
   }
-  form.value.length = Math.min(2000, Math.max(0, Math.round(value / 50) * 50))
+  if (value < 0) form.value.length = 0
+  else if (value > 2000) form.value.length = 2000
+  else form.value.length = Math.round(value / 50) * 50
+}
+
+function onLengthFocus() {
+  lengthInputFocused.value = true
+  if (form.value.length === 0) {
+    lengthDisplay.value = ''
+  } else {
+    lengthDisplay.value = String(form.value.length)
+  }
+}
+
+function onLengthBlur() {
+  lengthInputFocused.value = false
+  const value = lengthDisplay.value.trim()
+  if (value === '' || value === '自动') {
+    form.value.length = 0
+    lengthDisplay.value = ''
+  } else {
+    const num = Number(value)
+    if (!Number.isNaN(num)) {
+      form.value.length = Math.max(0, Math.min(2000, Math.round(num / 50) * 50))
+    }
+    lengthDisplay.value = ''
+  }
+}
+
+function onLengthInput(event) {
+  const value = event.target.value
+  if (value === '' || value === '自动') {
+    lengthDisplay.value = value
+    return
+  }
+  const num = Number(value)
+  if (!Number.isNaN(num) && num >= 0 && num <= 2000) {
+    lengthDisplay.value = value
+  }
+}
+
+function startKnobRotate(event) {
+  event.preventDefault()
+  const knobEl = event.currentTarget
+  const rect = knobEl.getBoundingClientRect()
+  knobCenterX.value = rect.left + rect.width / 2
+  knobCenterY.value = rect.top + rect.height / 2
+
+  const clientX = event.type === 'mousedown' ? event.clientX : event.touches[0].clientX
+  const clientY = event.type === 'mousedown' ? event.clientY : event.touches[0].clientY
+
+  let lastAngle = Math.atan2(clientY - knobCenterY.value, clientX - knobCenterX.value) * (180 / Math.PI)
+  let accumulatedRotation = 0
+  knobStartValue.value = form.value.length
+  knobDragging.value = true
+
+  const moveHandler = (e) => {
+    if (!knobDragging.value) return
+    const currentX = e.type === 'mousemove' ? e.clientX : e.touches[0].clientX
+    const currentY = e.type === 'mousemove' ? e.clientY : e.touches[0].clientY
+
+    const currentAngle = Math.atan2(currentY - knobCenterY.value, currentX - knobCenterX.value) * (180 / Math.PI)
+    let deltaAngle = currentAngle - lastAngle
+
+    if (deltaAngle > 180) deltaAngle -= 360
+    if (deltaAngle < -180) deltaAngle += 360
+
+    accumulatedRotation += deltaAngle
+    lastAngle = currentAngle
+
+    const deltaValue = (accumulatedRotation / 360) * 2000
+    const newValue = Math.max(0, Math.min(2000, Math.round((knobStartValue.value + deltaValue) / 50) * 50))
+    form.value.length = newValue
+  }
+
+  const endHandler = () => {
+    knobDragging.value = false
+    document.removeEventListener('mousemove', moveHandler)
+    document.removeEventListener('mouseup', endHandler)
+    document.removeEventListener('touchmove', moveHandler)
+    document.removeEventListener('touchend', endHandler)
+  }
+
+  document.addEventListener('mousemove', moveHandler)
+  document.addEventListener('mouseup', endHandler)
+  document.addEventListener('touchmove', moveHandler, { passive: false })
+  document.addEventListener('touchend', endHandler)
 }
 
 function buildStylePayload() {
@@ -731,9 +834,9 @@ function taskCover(task) {
 }
 
 function onTaskClick(task) {
-  if (task.status === 'completed') router.push(`/preview/${task.task_id}`)
+  if (task.status === 'completed' || task.status === 'failed') router.push(`/preview/${task.task_id}`)
   else if (task.status === 'processing' || task.status === 'pending') router.push(`/process/${task.task_id}`)
-  else ElMessage.warning('该任务已失败，请创建新任务')
+  else ElMessage.warning('该任务状态异常，无法查看')
 }
 
 async function onDeleteTask(task) {
@@ -783,9 +886,15 @@ async function onDeleteTask(task) {
 .config-panel {
   min-height: 0;
   background: var(--color-card);
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  border: none;
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-md);
+  transition: all var(--duration-normal) var(--ease-out);
+}
+
+.editor-panel:hover,
+.config-panel:hover {
+  box-shadow: var(--shadow-lg);
 }
 
 .editor-panel {
@@ -894,8 +1003,7 @@ label,
   color: var(--color-text-secondary);
 }
 
-.section-head span,
-.assistant-row span {
+.section-head span {
   font-size: 12px;
   color: var(--color-text-tertiary);
 }
@@ -937,26 +1045,31 @@ label,
 
 .ghost-btn,
 .dark-btn,
-.assistant-btn,
 .icon-btn {
-  height: 36px;
+  height: 40px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 0 14px;
-  border-radius: 7px;
+  padding: 0 16px;
+  border-radius: var(--radius-xl);
   border: 1px solid var(--color-border);
   background: var(--color-card);
   color: var(--color-text-secondary);
-  font-size: 13px;
-  font-weight: 700;
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: -0.016em;
   cursor: pointer;
+  transition: all var(--duration-normal) var(--ease-out);
+}
+
+.ghost-btn:hover {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-primary);
 }
 
 .ghost-btn svg,
 .dark-btn svg,
-.assistant-btn svg,
 .icon-btn svg,
 .upload-icon svg,
 .generate-icon svg,
@@ -966,7 +1079,7 @@ label,
 }
 
 .icon-btn {
-  width: 36px;
+  width: 40px;
   padding: 0;
   color: var(--color-text-tertiary);
   background: var(--color-bg-secondary);
@@ -979,9 +1092,20 @@ label,
 
 .dark-btn,
 .generate-btn {
-  background: var(--color-dark);
-  border-color: var(--color-dark);
-  color: #fff;
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #ffffff;
+}
+
+.dark-btn:hover,
+.generate-btn:hover {
+  background: var(--color-primary-hover);
+  transform: scale(1.02);
+}
+
+.dark-btn:active,
+.generate-btn:active {
+  transform: scale(0.98);
 }
 
 .title-field {
@@ -1035,8 +1159,8 @@ label,
 .prompt-input:focus,
 .theme-textarea:focus,
 .music-input:focus {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px var(--accent-glow);
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.1);
   background: #fff;
 }
 
@@ -1277,6 +1401,119 @@ label,
   color: var(--color-primary);
 }
 
+.knob-wrapper-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.knob-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.knob-compact {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  flex-shrink: 0;
+}
+
+.knob-compact:active {
+  cursor: grabbing;
+}
+
+.knob-svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.knob-bg-ring {
+  fill: none;
+  stroke: #e5e7eb;
+  stroke-width: 3;
+}
+
+.knob-progress-ring {
+  fill: none;
+  stroke: url(#knobGrad);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-dasharray: 125.66;
+  transition: stroke-dashoffset 0.1s ease-out;
+}
+
+.knob-inner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #007AFF 0%, #5AC8FA 100%);
+  box-shadow: 0 2px 8px rgba(0, 122, 255, 0.25);
+}
+
+.knob-text {
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.knob-pointer {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  width: 2px;
+  height: 8px;
+  background: #fff;
+  border-radius: 1px;
+  transform-origin: center 20px;
+  transition: transform 0.1s ease-out;
+  margin-left: -1px;
+}
+
+.knob-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.knob-title {
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.knob-hint {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.head-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.head-right > span {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .style-section {
   flex-shrink: 0;
   margin-top: 14px;
@@ -1345,18 +1582,6 @@ label,
 
 .inline-primary { background: var(--color-primary); color: #fff; }
 .inline-secondary { background: #fff; color: var(--color-text-secondary); border: 1px solid var(--color-border); }
-
-.assistant-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding-top: 4px;
-}
-
-.assistant-btn {
-  background: var(--color-bg-secondary);
-  color: var(--color-primary);
-}
 
 .config-tabs {
   display: flex;
@@ -1681,30 +1906,129 @@ label,
 }
 
 .script-length-block {
-  padding: 12px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-card);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  border-radius: 10px;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
 }
 
-.length-controls {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 86px;
+.knob-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.knob-row > label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1d1d1f;
+  white-space: nowrap;
+}
+
+.knob-group {
+  flex: 1;
+  display: flex;
   align-items: center;
   gap: 12px;
-  margin-top: 10px;
 }
 
-.length-input {
-  width: 86px;
-  height: 32px;
-  padding: 0 8px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-bg-secondary);
-  color: var(--color-text);
-  font-size: 13px;
+.knob-dial {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+  cursor: ns-resize;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.knob-dial:active {
+  opacity: 0.9;
+}
+
+.knob-circle {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.knob-track {
+  fill: none;
+  stroke: #f0f0f0;
+  stroke-width: 4;
+  stroke-linecap: round;
+}
+
+.knob-fill {
+  fill: none;
+  stroke: url(#knobGrad);
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-dasharray: 150.8;
+  transition: stroke-dashoffset 0.12s ease-out;
+}
+
+.knob-display {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.knob-num {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1d1d1f;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.knob-marker {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  width: 2px;
+  height: 10px;
+  margin-left: -1px;
+  background: linear-gradient(180deg, #007AFF, #5AC8FA);
+  border-radius: 1px;
+  transform-origin: 50% 24px;
+  transition: transform 0.12s ease-out;
+  box-shadow: 0 1px 3px rgba(0, 122, 255, 0.3);
+}
+
+.knob-field {
+  flex: 1;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  background: #f9f9f9;
+  color: #1d1d1f;
+  font-size: 14px;
+  font-weight: 500;
+  text-align: center;
   outline: none;
+  transition: all 0.15s ease;
+  font-variant-numeric: tabular-nums;
+}
+
+.knob-field:hover {
+  background: #ffffff;
+  border-color: rgba(0, 122, 255, 0.2);
+}
+
+.knob-field:focus {
+  background: #ffffff;
+  border-color: #007AFF;
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.08);
+}
+
+.knob-field::placeholder {
+  color: #86868b;
+  font-weight: 400;
 }
 
 .ratio-block,
@@ -2070,10 +2394,6 @@ label,
   padding: 70px 0;
   text-align: center;
   color: var(--color-text-tertiary);
-}
-
-.assistant-popup {
-  width: min(420px, calc(100vw - 32px));
 }
 
 .visual-style-overlay {

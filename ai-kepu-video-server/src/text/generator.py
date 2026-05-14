@@ -86,11 +86,11 @@ class ArticleGenerator:
         # 重试机制：最多尝试 3 次
         for attempt in range(3):
             try:
-                resp = requests.post(self.api_url, headers=self.headers, json=payload, timeout=120)
+                resp = requests.post(self.api_url, headers=self.headers, json=payload, timeout=120, verify=False)
                 resp.raise_for_status()
                 data = resp.json()
                 return self._extract_text(data)
-            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout, requests.exceptions.SSLError) as e:
                 if attempt == 2:  # 最后一次尝试失败
                     logger.error(f"API 调用失败，已重试 3 次: {e}")
                     raise

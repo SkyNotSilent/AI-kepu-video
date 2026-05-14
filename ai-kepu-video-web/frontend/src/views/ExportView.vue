@@ -7,16 +7,16 @@
         <el-empty v-if="!loading && !state" description="导出状态不可用" />
 
         <template v-else-if="!loading">
-        <section class="export-header">
-          <div>
-            <p class="eyebrow">导出中心</p>
-            <h1>选择交付格式</h1>
-          </div>
-          <div class="ratio-pill">
-            <span>{{ state.ratio }}</span>
-            <strong>{{ state.canvas.width }}×{{ state.canvas.height }}</strong>
-          </div>
-        </section>
+          <section class="export-header">
+            <div>
+              <p class="eyebrow">导出中心</p>
+              <h1>选择交付格式</h1>
+            </div>
+            <div class="ratio-pill">
+              <span>{{ state.ratio }}</span>
+              <strong>{{ state.canvas.width }}×{{ state.canvas.height }}</strong>
+            </div>
+          </section>
 
         <section class="status-strip">
           <div>
@@ -43,8 +43,8 @@
               <p>{{ state.preview.valid ? '会直接复用当前最终预览，速度最快。' : '当前最终预览不可复用，会重新生成 MP4。' }}</p>
             </div>
             <div class="card-actions">
-              <button type="button" class="primary-btn" :disabled="mp4Busy" @click="startExport('mp4')">{{ mp4Busy ? '生成中...' : mp4ActionText }}</button>
-              <button type="button" class="secondary-btn" :disabled="!state.outputs.mp4.available" @click="downloadMp4">下载 MP4</button>
+              <button type="button" class="primary-btn" :disabled="!state.outputs.mp4.available" @click="downloadMp4">下载 MP4</button>
+              <button type="button" class="secondary-btn" :disabled="mp4Busy" @click="startExport('mp4')">{{ mp4Busy ? '生成中...' : '重新生成 MP4' }}</button>
             </div>
             <p v-if="mp4Job?.status === 'failed'" class="error-text">{{ mp4Job.error || 'MP4 导出失败' }}</p>
           </article>
@@ -55,12 +55,20 @@
             </div>
             <div class="card-copy">
               <h2>剪映草稿</h2>
-              <p>推荐直接写入本机剪映草稿目录；也可以用浏览器下载后手动移动。</p>
+              <p>推荐直接写入本机剪映草稿目录。</p>
             </div>
-            <label class="path-field">
+            <div class="path-field">
               <span>剪映草稿目录</span>
-              <input v-model.trim="extractPath" type="text" :placeholder="extractPlaceholder" @input="saveExtractPath" />
-            </label>
+              <div class="path-input-group">
+                <input v-model.trim="extractPath" type="text" :placeholder="extractPlaceholder" @input="saveExtractPath" />
+                <button type="button" class="folder-btn" :disabled="folderPicking" @click="chooseDraftFolder">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                  </svg>
+                  {{ folderPicking ? '选择中...' : '选择' }}
+                </button>
+              </div>
+            </div>
             <div v-if="pathCheck.normalized && pathCheck.normalized !== extractPath" class="path-normalized">
               规范化后：{{ pathCheck.normalized }}
             </div>
@@ -81,20 +89,19 @@
               <span v-for="warning in draftLocalJob.result.warnings" :key="warning">{{ warning }}</span>
             </div>
             <div class="card-actions">
-              <button type="button" class="secondary-btn" :disabled="folderPicking" @click="chooseDraftFolder">{{ folderPicking ? '等待选择...' : '选择文件夹' }}</button>
               <button type="button" class="primary-btn" :disabled="draftLocalBusy || !pathCheck.valid" @click="startExport('draft_local')">{{ draftLocalBusy ? '写入中...' : '写入剪映' }}</button>
-              <button type="button" class="secondary-btn" :disabled="draftBusy" @click="downloadDraft">{{ draftBusy ? '准备中...' : '浏览器下载' }}</button>
             </div>
             <p v-if="draftLocalJob?.status === 'failed'" class="error-text">{{ draftLocalJob.error || '写入剪映失败' }}</p>
             <p v-if="draftJob?.status === 'failed'" class="error-text">{{ draftJob.error || '草稿导出失败' }}</p>
           </article>
         </section>
 
-        <div class="footer-actions">
-          <button type="button" class="secondary-btn" @click="router.push(`/preview/${taskId}`)">返回编辑</button>
-          <button type="button" class="primary-btn" @click="router.push(`/result/${taskId}`)">查看结果页</button>
-        </div>
-      </template>
+          <div class="footer-actions">
+            <button type="button" class="secondary-btn" @click="router.push(`/preview/${taskId}`)">返回编辑</button>
+            <button type="button" class="primary-btn" @click="router.push(`/result/${taskId}`)">查看结果页</button>
+          </div>
+        </template>
+      </div>
     </main>
   </div>
 </template>
@@ -368,9 +375,10 @@ h1 {
   min-height: 54px;
   display: grid;
   place-items: center;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border: none;
+  border-radius: var(--radius-lg);
   background: #fff;
+  box-shadow: var(--shadow-sm);
 }
 
 .ratio-pill span {
@@ -394,9 +402,10 @@ h1 {
 .status-strip > div {
   min-height: 62px;
   padding: 12px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border: none;
+  border-radius: var(--radius-md);
   background: #fff;
+  box-shadow: var(--shadow-sm);
 }
 
 .status-strip span {
@@ -431,25 +440,32 @@ h1 {
   align-content: start;
   gap: 18px;
   padding: 20px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border: none;
+  border-radius: var(--radius-xl);
   background: #fff;
+  box-shadow: var(--shadow-md);
+  transition: all var(--duration-normal) var(--ease-out);
+}
+
+.export-card:hover {
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-2px);
 }
 
 .export-card.preferred {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px var(--color-primary-bg);
+  border: 2px solid var(--color-primary);
+  box-shadow: 0 0 0 4px rgba(0, 0, 0, 0.04);
 }
 
 .export-card.preferred::before {
   content: "默认";
   justify-self: start;
-  padding: 2px 8px;
-  border-radius: 6px;
-  background: var(--color-primary-bg);
-  color: var(--color-primary);
-  font-size: 11px;
-  font-weight: 700;
+  padding: 4px 12px;
+  border-radius: var(--radius-md);
+  background: var(--color-primary);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .card-icon {
@@ -505,20 +521,57 @@ h1 {
   font-weight: 600;
 }
 
-.path-field input {
-  width: 100%;
-  height: 38px;
-  padding: 0 12px;
+.path-input-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.path-input-group input {
+  flex: 1;
+  height: 40px;
+  padding: 0 14px;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--color-bg-secondary);
   color: var(--color-text);
   outline: none;
+  transition: all var(--duration-fast) var(--ease-out);
 }
 
-.path-field input:focus {
-  border-color: var(--color-primary);
+.path-input-group input:focus {
+  border-color: var(--color-accent);
   background: #fff;
+  box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.1);
+}
+
+.folder-btn {
+  height: 40px;
+  padding: 0 18px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  background: #fff;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: -0.016em;
+  cursor: pointer;
+  transition: all var(--duration-normal) var(--ease-out);
+  white-space: nowrap;
+}
+
+.folder-btn:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: var(--color-primary-bg);
+}
+
+.folder-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .path-normalized,
@@ -579,29 +632,45 @@ h1 {
 
 .primary-btn,
 .secondary-btn {
-  min-height: 38px;
-  padding: 0 14px;
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 600;
+  min-height: 40px;
+  padding: 0 20px;
+  border-radius: var(--radius-xl);
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: -0.016em;
   cursor: pointer;
+  transition: all var(--duration-normal) var(--ease-out);
 }
 
 .primary-btn {
-  border: 1px solid var(--color-primary);
+  border: none;
   background: var(--color-primary);
-  color: #fff;
+  color: #ffffff;
+  box-shadow: var(--shadow-sm);
+}
+
+.primary-btn:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+  transform: scale(1.02);
+}
+
+.primary-btn:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
 .secondary-btn {
-  border: 1px solid var(--color-border);
-  background: #fff;
-  color: var(--color-text-secondary);
+  border: 1px solid var(--color-primary);
+  background: transparent;
+  color: var(--color-primary);
+}
+
+.secondary-btn:hover:not(:disabled) {
+  background: var(--color-primary-bg);
 }
 
 .primary-btn:disabled,
 .secondary-btn:disabled {
-  opacity: 0.45;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 

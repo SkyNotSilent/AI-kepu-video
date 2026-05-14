@@ -133,6 +133,7 @@ class TaskExecutor:
                     segment_text=seg,
                     summary=pipeline.summary,
                     style=visual_prompt_style,
+                    aspect_ratio=ratio,
                 )
                 image_prompts.append(prompt)
                 task.update_step_progress("image_prompt_generation", i + 1, segments_count)
